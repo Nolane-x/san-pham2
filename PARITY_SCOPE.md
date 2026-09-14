@@ -1,6 +1,6 @@
 # Forensic parity scope
 
-This branch restores recovered DrawAI 1.2.17 behavior without inventing a new product architecture.
+This branch restores recovered 1.2.17 executable behavior without inventing a new product architecture.
 
 Immediate parity slice:
 
