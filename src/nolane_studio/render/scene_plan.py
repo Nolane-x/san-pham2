@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 
+from .config import normalize_render_config
 from .effects import (
     ObjectTimingEntry,
     RenderProfile,
@@ -30,6 +31,7 @@ class SceneRenderPlan:
     object_timing: tuple[ObjectTimingEntry, ...]
     total_duration: float
     media_sources: tuple[str, ...]
+    render_config: Mapping[str, Any] = field(default_factory=dict)
 
 
 def _outro_seconds(settings: Mapping[str, Any]) -> float:
@@ -47,20 +49,23 @@ def build_scene_render_plan(store: ScenePlanStore, project_id: str) -> list[Scen
     This stage deliberately does not flatten the canvas to a single media
     layer. Every visible object remains in z-order so later whiteboard,
     drawing, text, shape and media compositors can reproduce the editor state
-    without silently dropping layers.
+    without silently dropping layers. The normalized render configuration is
+    retained on the plan so specialized renderers can consume recovered
+    behavior settings without re-reading storage or depending on Qt.
     """
     plans: list[SceneRenderPlan] = []
     for scene in store.list_scenes(project_id):
         scene_id = str(scene["id"])
         settings = store.get_scene_render_settings(scene_id)
-        profile = render_profile_from_config(settings)
+        render_config = normalize_render_config(settings)
+        profile = render_profile_from_config(render_config)
         objects = tuple(
             dict(obj)
             for obj in store.list_visual_objects(scene_id)
             if bool(obj.get("visible", True))
         )
-        timing = tuple(build_render_timing_plan(objects, settings))
-        outro = _outro_seconds(settings)
+        timing = tuple(build_render_timing_plan(objects, render_config))
+        outro = _outro_seconds(render_config)
 
         if timing:
             total = estimate_object_timeline_seconds(
@@ -89,6 +94,7 @@ def build_scene_render_plan(store: ScenePlanStore, project_id: str) -> list[Scen
                 object_timing=timing,
                 total_duration=float(total),
                 media_sources=media_sources,
+                render_config=render_config,
             )
         )
     return plans
