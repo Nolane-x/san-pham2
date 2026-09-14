@@ -2,8 +2,16 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import tempfile
+from collections.abc import MutableMapping
 from pathlib import Path
+
+
+def configure_capture_environment(environ: MutableMapping[str, str], system_name: str) -> None:
+    """Use native Windows font/render plumbing; offscreen only where a display is unavailable."""
+    if system_name != "Windows":
+        environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 def main() -> int:
@@ -11,7 +19,7 @@ def main() -> int:
     parser.add_argument("--output-dir", required=True)
     args = parser.parse_args()
 
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    configure_capture_environment(os.environ, platform.system())
     from PySide6.QtWidgets import QApplication
 
     from nolane_studio.domain import Scene
