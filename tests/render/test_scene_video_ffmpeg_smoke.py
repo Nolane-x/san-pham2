@@ -38,7 +38,7 @@ def _layer_renderer(plan, output, *, objects, transparent, width, height):
     return Path(output)
 
 
-def test_real_ffmpeg_scene_video_compositor_preserves_source_audio(tmp_path):
+def test_real_ffmpeg_scene_video_compositor_preserves_rotated_source_audio(tmp_path):
     width, height, fps = 64, 36, 12
     ffmpeg = resolve_ffmpeg_exe()
     runner = SubprocessRunner()
@@ -74,7 +74,7 @@ def test_real_ffmpeg_scene_video_compositor_preserves_source_audio(tmp_path):
                 "y": 4,
                 "width": 48,
                 "height": 28,
-                "rotation": 0,
+                "rotation": 30,
                 "opacity": 0.8,
                 "z_index": 0,
                 "visible": True,
