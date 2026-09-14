@@ -191,8 +191,8 @@ def test_project_exporter_fails_closed_for_unrecovered_track_payloads(tmp_path, 
 
 
 def test_project_exporter_propagates_video_compositor_refusal(tmp_path):
-    store, first, _second = _store(tmp_path)
-    store.add_visual_object(first["id"], "video", name="Video", source="clip.mp4")
+    store, _first, second = _store(tmp_path)
+    store.add_visual_object(second["id"], "video", name="Video", source="clip.mp4")
     media = FakeMediaExporter()
 
     def video_renderer(plan, output, **kwargs):
@@ -201,7 +201,9 @@ def test_project_exporter_propagates_video_compositor_refusal(tmp_path):
     exporter = ProjectSceneExporter(
         store,
         media_exporter=media,
+        snapshot_renderer=_touch_snapshot,
         video_renderer=video_renderer,
+        whiteboard_renderer=_touch_whiteboard,
     )
 
     with pytest.raises(CompositionRequiresVideo, match="refused"):
