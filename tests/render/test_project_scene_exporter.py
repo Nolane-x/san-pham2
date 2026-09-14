@@ -39,30 +39,46 @@ def _store(tmp_path):
     return store, first, second
 
 
-def test_project_exporter_composes_scenes_in_persisted_order_and_keeps_workspace_alive(tmp_path):
+def test_project_exporter_routes_whiteboard_before_snapshot_and_keeps_workspace_alive(tmp_path):
     store, first, second = _store(tmp_path)
     media = FakeMediaExporter()
-    rendered = []
+    snapshots = []
+    whiteboards = []
 
     def snapshot(plan, output):
-        rendered.append(plan.scene_id)
+        snapshots.append(plan.scene_id)
         Path(output).write_bytes(b"png")
         return Path(output)
 
-    exporter = ProjectSceneExporter(store, media_exporter=media, snapshot_renderer=snapshot)
+    def whiteboard(plan, output, **kwargs):
+        whiteboards.append((plan.scene_id, kwargs))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        whiteboard_renderer=whiteboard,
+    )
     output = tmp_path / "final.mp4"
 
     result = exporter.export("p1", output)
 
     assert result == output
-    assert rendered == [first["id"], second["id"]]
+    assert snapshots == [second["id"]]
+    assert whiteboards == [(first["id"], {"width": 1280, "height": 720, "fps": 24})]
     assert len(media.calls) == 1
     clips, called_output, kwargs, existed_during_call = media.calls[0]
     assert called_output == output
     assert existed_during_call == [True, True]
     assert [clip.clip_id for clip in clips] == [first["id"], second["id"]]
+    assert [clip.kind for clip in clips] == ["video", "image"]
     assert [clip.duration for clip in clips] == [3.0, 4.0]
-    assert [clip.render_profile["style"] for clip in clips] == ["whiteboard", "color_reveal"]
+    assert clips[0].trim_end == clips[0].duration
+    assert clips[0].render_profile is None
+    assert clips[1].render_profile["style"] == "color_reveal"
     assert kwargs == {"width": 1280, "height": 720, "fps": 24}
     assert all(not Path(clip.path).exists() for clip in clips)
 
