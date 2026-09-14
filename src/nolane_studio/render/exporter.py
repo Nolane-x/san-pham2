@@ -7,8 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Sequence
 
+from nolane_studio.domain import TransitionSpec
+
 from .effects import RenderProfile, build_image_filter_graph
 from .ffmpeg import SubprocessRunner
+from .timeline import build_transition_gaps
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +23,7 @@ class ExportClip:
     trim_end: float | None = None
     speed: float = 1.0
     render_profile: Mapping[str, object] | None = None
+    clip_id: str = ""
 
     def __post_init__(self) -> None:
         kind = self.kind.strip().lower()
@@ -34,6 +38,7 @@ class ExportClip:
         if self.speed <= 0:
             raise ValueError("speed must be > 0")
         object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "clip_id", str(self.clip_id).strip())
 
 
 def resolve_ffmpeg_exe() -> str:
@@ -114,32 +119,10 @@ def build_image_segment_command(
             "1:a:0",
         ]
     cmd += [
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-threads",
-        "1",
-        "-crf",
-        "20",
-        "-pix_fmt",
-        "yuv420p",
-        "-profile:v",
-        "high",
-        "-level",
-        "4.1",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "160k",
-        "-ar",
-        "48000",
-        "-ac",
-        "2",
-        "-shortest",
-        "-movflags",
-        "+faststart",
-        output,
+        "-c:v", "libx264", "-preset", "veryfast", "-threads", "1", "-crf", "20",
+        "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
+        "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
+        "-shortest", "-movflags", "+faststart", output,
     ]
     return cmd
 
@@ -182,34 +165,50 @@ def build_video_segment_command(
     if has_audio and speed != 1.0:
         cmd += ["-af", _atempo_filter(speed)]
     cmd += [
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-threads",
-        "1",
-        "-crf",
-        "20",
-        "-pix_fmt",
-        "yuv420p",
-        "-profile:v",
-        "high",
-        "-level",
-        "4.1",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "160k",
-        "-ar",
-        "48000",
-        "-ac",
-        "2",
-        "-shortest",
-        "-movflags",
-        "+faststart",
-        output,
+        "-c:v", "libx264", "-preset", "veryfast", "-threads", "1", "-crf", "20",
+        "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
+        "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
+        "-shortest", "-movflags", "+faststart", output,
     ]
     return cmd
+
+
+def build_transition_segment_command(
+    ffmpeg: str,
+    left: str,
+    right: str,
+    output: str,
+    *,
+    effect: str = "fade",
+    duration: float = 0.5,
+) -> list[str]:
+    duration = float(duration)
+    if not 0.1 <= duration <= 10.0:
+        raise ValueError("transition duration must be between 0.1 and 10 seconds")
+    effect = str(effect).strip().lower()
+    allowed = {"fade", "wipeleft", "wiperight", "slideleft", "slideright", "smoothleft", "smoothright"}
+    if effect not in allowed:
+        effect = "fade"
+    graph = (
+        f"[0:v]trim=duration=0.050000,setpts=PTS-STARTPTS,"
+        f"tpad=stop_mode=clone:stop_duration={duration:.6f}[left];"
+        f"[1:v]trim=duration=0.050000,setpts=PTS-STARTPTS,"
+        f"tpad=stop_mode=clone:stop_duration={duration:.6f}[right];"
+        f"[left][right]xfade=transition={effect}:duration={duration:.6f}:offset=0[outv]"
+    )
+    return [
+        ffmpeg, "-y",
+        "-sseof", "-0.050000", "-i", left,
+        "-i", right,
+        "-f", "lavfi", "-t", f"{duration:.6f}", "-i",
+        "anullsrc=channel_layout=stereo:sample_rate=48000",
+        "-filter_complex", graph,
+        "-map", "[outv]", "-map", "2:a:0",
+        "-t", f"{duration:.6f}",
+        "-c:v", "libx264", "-preset", "veryfast", "-threads", "1", "-crf", "20",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
+        "-ar", "48000", "-ac", "2", "-movflags", "+faststart", output,
+    ]
 
 
 def probe_has_audio(ffmpeg: str, path: str) -> bool:
@@ -229,11 +228,11 @@ def _concat_escape(path: Path) -> str:
 
 
 class MediaExporter:
-    """Deterministic low-memory image/video exporter.
+    """Deterministic low-memory timeline exporter.
 
-    Sources are normalized sequentially to a common A/V shape before concat.
-    Trims, playback speed and authored image effects are applied during this
-    normalization step so the full timeline never needs to be decoded in RAM.
+    Clips are normalized sequentially. Transitions are separate normalized
+    segments inserted *between* clips, preserving the recovered additive
+    duration semantics instead of shortening clips through overlap.
     """
 
     def __init__(
@@ -255,66 +254,68 @@ class MediaExporter:
         width: int = 1280,
         height: int = 720,
         fps: int = 24,
+        transitions: Sequence[TransitionSpec] = (),
     ) -> Path:
         clips = list(clips)
         if not clips:
             raise ValueError("at least one media clip is required")
         output = Path(output)
         output.parent.mkdir(parents=True, exist_ok=True)
+        clip_ids = [clip.clip_id or str(index) for index, clip in enumerate(clips)]
+        build_transition_gaps(clip_ids, transitions)  # validates adjacency/duplicates
+        transition_lookup = {(t.from_id, t.to_id): t for t in transitions}
 
         with tempfile.TemporaryDirectory(prefix="nolane-studio-export-") as temp_raw:
             temp = Path(temp_raw)
-            segments: list[Path] = []
+            normalized: list[Path] = []
             for index, clip in enumerate(clips):
                 segment = temp / f"segment-{index:04d}.mp4"
                 if clip.kind == "image":
                     profile = RenderProfile(**dict(clip.render_profile)) if clip.render_profile else None
                     command = build_image_segment_command(
-                        self.ffmpeg,
-                        clip.path,
-                        str(segment),
-                        duration=clip.duration,
-                        width=width,
-                        height=height,
-                        fps=fps,
-                        profile=profile,
+                        self.ffmpeg, clip.path, str(segment), duration=clip.duration,
+                        width=width, height=height, fps=fps, profile=profile,
                     )
                 else:
                     command = build_video_segment_command(
-                        self.ffmpeg,
-                        clip.path,
-                        str(segment),
-                        has_audio=self.audio_probe(clip.path),
-                        width=width,
-                        height=height,
-                        fps=fps,
-                        trim_start=clip.trim_start,
-                        trim_end=clip.trim_end,
-                        speed=clip.speed,
+                        self.ffmpeg, clip.path, str(segment),
+                        has_audio=self.audio_probe(clip.path), width=width, height=height, fps=fps,
+                        trim_start=clip.trim_start, trim_end=clip.trim_end, speed=clip.speed,
                     )
                 self.runner.run(command)
-                segments.append(segment)
+                normalized.append(segment)
+
+            assembly: list[Path] = []
+            for index, segment in enumerate(normalized):
+                assembly.append(segment)
+                if index >= len(normalized) - 1:
+                    continue
+                pair = (clip_ids[index], clip_ids[index + 1])
+                transition = transition_lookup.get(pair)
+                if transition is None:
+                    continue
+                trans_segment = temp / f"transition-{index:04d}.mp4"
+                self.runner.run(
+                    build_transition_segment_command(
+                        self.ffmpeg,
+                        str(segment),
+                        str(normalized[index + 1]),
+                        str(trans_segment),
+                        effect=transition.effect,
+                        duration=transition.duration,
+                    )
+                )
+                assembly.append(trans_segment)
 
             concat_file = temp / "concat.txt"
             concat_file.write_text(
-                "".join(f"file '{_concat_escape(segment)}'\n" for segment in segments),
+                "".join(f"file '{_concat_escape(segment)}'\n" for segment in assembly),
                 encoding="utf-8",
             )
             self.runner.run(
                 [
-                    self.ffmpeg,
-                    "-y",
-                    "-f",
-                    "concat",
-                    "-safe",
-                    "0",
-                    "-i",
-                    str(concat_file),
-                    "-c",
-                    "copy",
-                    "-movflags",
-                    "+faststart",
-                    str(output),
+                    self.ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                    "-c", "copy", "-movflags", "+faststart", str(output),
                 ]
             )
         return output
