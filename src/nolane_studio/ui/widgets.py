@@ -8,6 +8,7 @@ from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsItem,
+    QGraphicsPathItem,
     QGraphicsScene,
     QGraphicsView,
     QLabel,
@@ -131,7 +132,15 @@ class _CanvasObjectItem(QGraphicsItem):
             painter.setFont(font)
             painter.drawText(rect.adjusted(6, 4, -6, -4), Qt.TextFlag.TextWordWrap, str(self.payload.get("text", "Text")))
         elif self.kind == "drawing":
-            painter.setPen(QPen(QColor(str(self.payload.get("color", "#20232A"))), float(self.payload.get("stroke", 5))))
+            painter.setPen(
+                QPen(
+                    QColor(str(self.payload.get("color", "#20232A"))),
+                    float(self.payload.get("stroke", 5)),
+                    Qt.PenStyle.SolidLine,
+                    Qt.PenCapStyle.RoundCap,
+                    Qt.PenJoinStyle.RoundJoin,
+                )
+            )
             points = self.payload.get("points") or []
             if len(points) >= 2:
                 path = QPainterPath(QPointF(float(points[0][0]), float(points[0][1])))
@@ -156,19 +165,67 @@ class _CanvasObjectItem(QGraphicsItem):
         self.owner._emit_transform(self)
 
 
+class _CanvasGraphicsView(QGraphicsView):
+    """View that routes pointer strokes to CanvasEditor only while draw mode is active."""
+
+    def __init__(self, scene: QGraphicsScene, owner: "CanvasEditor") -> None:
+        super().__init__(scene, owner)
+        self.owner = owner
+
+    def _scene_point(self, event) -> QPointF:
+        return self.mapToScene(event.position().toPoint())
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if self.owner.drawing_enabled and event.button() == Qt.MouseButton.LeftButton:
+            point = self._scene_point(event)
+            self.owner.begin_stroke(point.x(), point.y())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if (
+            self.owner.drawing_enabled
+            and self.owner.stroke_active
+            and event.buttons() & Qt.MouseButton.LeftButton
+        ):
+            point = self._scene_point(event)
+            self.owner.append_stroke_point(point.x(), point.y())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if (
+            self.owner.drawing_enabled
+            and self.owner.stroke_active
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            point = self._scene_point(event)
+            self.owner.append_stroke_point(point.x(), point.y())
+            self.owner.finish_stroke()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 class CanvasEditor(QWidget):
     """Persistent 1280x720 scene composition surface used by the rebuilt visual editor."""
 
     object_selected = Signal(str)
     object_transform_changed = Signal(str, float, float, float, float, float)
+    drawing_completed = Signal(list)
+
+    CANVAS_WIDTH = 1280.0
+    CANVAS_HEIGHT = 720.0
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setMinimumSize(520, 300)
         self._graphics_scene = QGraphicsScene(self)
-        self._graphics_scene.setSceneRect(0, 0, 1280, 720)
+        self._graphics_scene.setSceneRect(0, 0, self.CANVAS_WIDTH, self.CANVAS_HEIGHT)
         self._graphics_scene.setBackgroundBrush(QColor("#F5F3EC"))
-        self._view = QGraphicsView(self._graphics_scene, self)
+        self._view = _CanvasGraphicsView(self._graphics_scene, self)
         self._view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self._view.setFrameShape(QFrame.Shape.NoFrame)
         self._view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -178,7 +235,18 @@ class CanvasEditor(QWidget):
         layout.addWidget(self._view)
         self._items: dict[str, _CanvasObjectItem] = {}
         self._ordered_ids: list[str] = []
+        self._drawing_enabled = False
+        self._stroke_points: list[tuple[float, float]] = []
+        self._stroke_preview: QGraphicsPathItem | None = None
         self._graphics_scene.selectionChanged.connect(self._selection_changed)
+
+    @property
+    def drawing_enabled(self) -> bool:
+        return self._drawing_enabled
+
+    @property
+    def stroke_active(self) -> bool:
+        return bool(self._stroke_points)
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
         super().resizeEvent(event)
@@ -191,8 +259,82 @@ class CanvasEditor(QWidget):
     def _fit_canvas(self) -> None:
         self._view.fitInView(self._graphics_scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
+    def set_drawing_enabled(self, enabled: bool) -> None:
+        self._drawing_enabled = bool(enabled)
+        if not self._drawing_enabled:
+            self.cancel_stroke()
+        self._view.viewport().setCursor(
+            Qt.CursorShape.CrossCursor if self._drawing_enabled else Qt.CursorShape.ArrowCursor
+        )
+
+    @classmethod
+    def _clamped_point(cls, x: float, y: float) -> tuple[float, float]:
+        return (
+            max(0.0, min(cls.CANVAS_WIDTH, float(x))),
+            max(0.0, min(cls.CANVAS_HEIGHT, float(y))),
+        )
+
+    def begin_stroke(self, x: float, y: float) -> None:
+        if not self._drawing_enabled:
+            return
+        self.cancel_stroke()
+        self._stroke_points = [self._clamped_point(x, y)]
+        self._update_stroke_preview()
+
+    def append_stroke_point(self, x: float, y: float) -> None:
+        if not self._drawing_enabled or not self._stroke_points:
+            return
+        point = self._clamped_point(x, y)
+        if point == self._stroke_points[-1]:
+            return
+        self._stroke_points.append(point)
+        self._update_stroke_preview()
+
+    def finish_stroke(self) -> None:
+        if not self._drawing_enabled or not self._stroke_points:
+            return
+        points = list(self._stroke_points)
+        self._clear_stroke_preview()
+        self._stroke_points = []
+        if len(points) >= 2:
+            self.drawing_completed.emit(points)
+
+    def cancel_stroke(self) -> None:
+        self._stroke_points = []
+        self._clear_stroke_preview()
+
+    def _update_stroke_preview(self) -> None:
+        if not self._stroke_points:
+            return
+        first = self._stroke_points[0]
+        path = QPainterPath(QPointF(first[0], first[1]))
+        for x, y in self._stroke_points[1:]:
+            path.lineTo(x, y)
+        if self._stroke_preview is None:
+            self._stroke_preview = QGraphicsPathItem()
+            self._stroke_preview.setZValue(1_000_000)
+            self._stroke_preview.setPen(
+                QPen(
+                    QColor("#20232A"),
+                    5.0,
+                    Qt.PenStyle.SolidLine,
+                    Qt.PenCapStyle.RoundCap,
+                    Qt.PenJoinStyle.RoundJoin,
+                )
+            )
+            self._graphics_scene.addItem(self._stroke_preview)
+        self._stroke_preview.setPath(path)
+
+    def _clear_stroke_preview(self) -> None:
+        if self._stroke_preview is not None:
+            if self._stroke_preview.scene() is self._graphics_scene:
+                self._graphics_scene.removeItem(self._stroke_preview)
+            self._stroke_preview = None
+
     def set_objects(self, objects: list[dict[str, Any]]) -> None:
+        self.cancel_stroke()
         self._graphics_scene.clear()
+        self._stroke_preview = None
         self._items.clear()
         ordered = sorted(objects, key=lambda row: (int(row.get("z_index", 0)), str(row.get("id", ""))))
         self._ordered_ids = [str(row["id"]) for row in ordered]
