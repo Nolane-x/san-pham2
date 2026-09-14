@@ -19,17 +19,19 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
-    QStackedWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
+from ..ai.object_voice import ObjectVoiceAnalyzer, merge_analysis_metadata
 from ..ai.scenes import split_script_into_scenes
 from ..config import ProviderSettings, SettingsStore
+from ..providers.registry import ProviderRegistry
 from ..render.exporter import ExportClip, MediaExporter
 from ..storage.store import ProjectStore
-from .design import PRODUCT_TAGLINE, ThemeTokens
+from ..voice import VoiceFromContentService
+from .design import PRODUCT_TAGLINE
 from .widgets import CanvasPreview, Dot, SectionTitle, Surface
 
 
@@ -69,6 +71,23 @@ class ExportWorker(QThread):
             self.completed.emit(self.output_path)
 
 
+class TaskWorker(QThread):
+    completed = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, task: Callable[[], object], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.task = task
+
+    def run(self) -> None:
+        try:
+            result = self.task()
+        except Exception as exc:  # provider/filesystem boundary
+            self.failed.emit(str(exc))
+        else:
+            self.completed.emit(result)
+
+
 class CreatePage(QWidget):
     project_created = Signal(str, str, list)
 
@@ -89,7 +108,9 @@ class CreatePage(QWidget):
         input_layout = QVBoxLayout(input_surface)
         input_layout.setContentsMargins(22, 20, 22, 20)
         input_layout.setSpacing(14)
-        input_layout.addWidget(SectionTitle("Input", "Your story", "Structure stays local. Providers only enrich what you approve."))
+        input_layout.addWidget(
+            SectionTitle("Input", "Your story", "Structure stays local. Providers only enrich what you approve.")
+        )
 
         self.title_edit = QLineEdit()
         self.title_edit.setPlaceholderText("Project title")
@@ -179,11 +200,19 @@ class CreatePage(QWidget):
 class StudioPage(QWidget):
     status_message = Signal(str)
 
-    def __init__(self, store: ProjectStore, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        store: ProjectStore,
+        parent: QWidget | None = None,
+        *,
+        providers: ProviderRegistry | None = None,
+    ) -> None:
         super().__init__(parent)
         self.store = store
+        self.providers = providers or ProviderRegistry()
         self.project_id: str | None = None
         self._export_worker: ExportWorker | None = None
+        self._task_workers: list[TaskWorker] = []
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -200,11 +229,19 @@ class StudioPage(QWidget):
         status.setObjectName("chip")
         tb.addWidget(status)
         tb.addStretch(1)
+        self.ai_analyze_button = QPushButton("AI Analyze")
+        self.ai_analyze_button.setToolTip("Analyze the selected scene image + narration")
+        self.ai_analyze_button.clicked.connect(self._analyze_selected_scene)
+        self.analyze_all_button = QPushButton("Analyze All")
+        self.analyze_all_button.setToolTip("Analyze every scene that has image + narration audio")
+        self.analyze_all_button.clicked.connect(self._analyze_all_scenes)
         preview = QPushButton("Preview")
         preview.setToolTip("Preview uses the current scene canvas")
         self.export_button = QPushButton("Export video")
         self.export_button.setObjectName("primary")
         self.export_button.clicked.connect(self._export_media)
+        tb.addWidget(self.ai_analyze_button)
+        tb.addWidget(self.analyze_all_button)
         tb.addWidget(preview)
         tb.addWidget(self.export_button)
         outer.addWidget(toolbar)
@@ -261,9 +298,14 @@ class StudioPage(QWidget):
         media_title.setObjectName("sectionTitle")
         media_header.addWidget(media_title)
         media_header.addStretch(1)
+        attach_media = QPushButton("Attach")
+        attach_media.setObjectName("ghost")
+        attach_media.setToolTip("Attach selected image/audio to the selected scene")
+        attach_media.clicked.connect(self._attach_selected_media)
         import_media = QPushButton("Import")
         import_media.setObjectName("ghost")
         import_media.clicked.connect(self._import_media)
+        media_header.addWidget(attach_media)
         media_header.addWidget(import_media)
         scenes_layout.addLayout(media_header)
         self.media_list = QListWidget()
@@ -293,7 +335,7 @@ class StudioPage(QWidget):
         inspector.setMaximumWidth(330)
         inspector_layout = QVBoxLayout(inspector)
         inspector_layout.setContentsMargins(16, 14, 16, 14)
-        inspector_layout.setSpacing(12)
+        inspector_layout.setSpacing(10)
         inspector_layout.addWidget(SectionTitle("Selected scene", "Inspector"))
         tabs = QComboBox()
         tabs.addItems(["Drawing", "Motion", "Voice", "Timing"])
@@ -304,12 +346,21 @@ class StudioPage(QWidget):
         inspector_layout.addWidget(scene_text_label)
         self.scene_text_edit = QTextEdit()
         self.scene_text_edit.setPlaceholderText("Select a scene to edit its narration or description")
-        self.scene_text_edit.setMinimumHeight(92)
+        self.scene_text_edit.setMinimumHeight(82)
         inspector_layout.addWidget(self.scene_text_edit)
         save_scene = QPushButton("Save scene")
         save_scene.setObjectName("primary")
         save_scene.clicked.connect(self._save_selected_scene)
         inspector_layout.addWidget(save_scene)
+
+        voice_actions = QHBoxLayout()
+        self.generate_voice_button = QPushButton("Generate voice")
+        self.generate_voice_button.clicked.connect(self._generate_selected_voice)
+        self.voice_from_content_button = QPushButton("Voice From Content")
+        self.voice_from_content_button.clicked.connect(self._voice_from_content)
+        voice_actions.addWidget(self.generate_voice_button)
+        voice_actions.addWidget(self.voice_from_content_button)
+        inspector_layout.addLayout(voice_actions)
 
         for label, value in (("Reveal", "8.0 s"), ("Hold", "1.0 s"), ("Brush", "Left → right"), ("Camera", "Static")):
             row = QFrame()
@@ -356,6 +407,42 @@ class StudioPage(QWidget):
         vertical.setStretchFactor(0, 1)
         vertical.setStretchFactor(1, 0)
         vertical.setSizes([600, 180])
+
+    def _start_task(
+        self,
+        task: Callable[[], object],
+        *,
+        started: str,
+        success: Callable[[object], str],
+    ) -> None:
+        self.status_message.emit(started)
+        worker = TaskWorker(task, self)
+        self._task_workers.append(worker)
+
+        def done(result: object) -> None:
+            self.status_message.emit(success(result))
+            self._refresh_media()
+            scene_id = self._selected_scene_id()
+            if scene_id:
+                self._refresh_scenes(selected_id=scene_id, fallback_row=self.scenes.currentRow())
+
+        def failed(message: str) -> None:
+            self.status_message.emit(f"Operation failed · {message}")
+
+        def cleanup() -> None:
+            if worker in self._task_workers:
+                self._task_workers.remove(worker)
+
+        worker.completed.connect(done)
+        worker.failed.connect(failed)
+        worker.finished.connect(cleanup)
+        worker.start()
+
+    def _provider_name(self, capability: str) -> str:
+        matches = self.providers.find(**{capability: True})
+        if not matches:
+            raise RuntimeError(f"No {capability.upper()} provider configured. Open Providers first.")
+        return matches[0].name
 
     def _rebuild_timeline(self, scene_count: int) -> None:
         while self.timeline_track.count():
@@ -516,11 +603,13 @@ class StudioPage(QWidget):
             return
         media = self.store.list_media(self.project_id)
         if not media:
-            self.media_list.addItem("Drop in images or video")
+            self.media_list.addItem("Drop in image, video or audio")
             return
-        for item in media:
-            icon = "IMG" if item["kind"] == "image" else ("VID" if item["kind"] == "video" else "AUD")
-            self.media_list.addItem(f"{icon}   {item['original_name']}")
+        for media_row in media:
+            icon = "IMG" if media_row["kind"] == "image" else ("VID" if media_row["kind"] == "video" else "AUD")
+            self.media_list.addItem(f"{icon}   {media_row['original_name']}")
+            item = self.media_list.item(self.media_list.count() - 1)
+            item.setData(Qt.ItemDataRole.UserRole, media_row["id"])
 
     def _import_media(self) -> None:
         if not self.project_id:
@@ -530,7 +619,7 @@ class StudioPage(QWidget):
             self,
             "Import media",
             "",
-            "Media (*.png *.jpg *.jpeg *.webp *.bmp *.mp4 *.mov *.mkv *.webm);;All files (*)",
+            "Media (*.png *.jpg *.jpeg *.webp *.bmp *.mp4 *.mov *.mkv *.webm *.mp3 *.wav *.m4a *.flac *.ogg);;All files (*)",
         )
         if not paths:
             return
@@ -538,19 +627,177 @@ class StudioPage(QWidget):
         media_root.mkdir(parents=True, exist_ok=True)
         image_ext = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
         video_ext = {".mp4", ".mov", ".mkv", ".webm"}
+        audio_ext = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
         imported = 0
         for source_raw in paths:
             source = Path(source_raw)
             ext = source.suffix.lower()
-            if ext not in image_ext | video_ext:
+            if ext not in image_ext | video_ext | audio_ext:
                 continue
-            kind = "image" if ext in image_ext else "video"
+            kind = "image" if ext in image_ext else ("video" if ext in video_ext else "audio")
             target = media_root / f"{uuid.uuid4().hex[:8]}-{source.name}"
             shutil.copy2(source, target)
             self.store.add_media(self.project_id, kind, source.name, str(target))
             imported += 1
         self._refresh_media()
         self.status_message.emit(f"Imported {imported} media file(s)")
+
+    def _attach_selected_media(self) -> None:
+        if not self.project_id:
+            return
+        scene_id = self._selected_scene_id()
+        item = self.media_list.currentItem()
+        if not scene_id or item is None:
+            self.status_message.emit("Select both a scene and a media item first")
+            return
+        media_id = item.data(Qt.ItemDataRole.UserRole)
+        media = next((row for row in self.store.list_media(self.project_id) if row["id"] == media_id), None)
+        scene = self._scene_by_id(scene_id)
+        if media is None or scene is None:
+            return
+        metadata = dict(scene.get("metadata") or {})
+        if media["kind"] == "image":
+            metadata.update({"visual_media_id": media["id"], "visual_path": media["file_path"]})
+        elif media["kind"] == "audio":
+            metadata.update({"voice_media_id": media["id"], "voice_path": media["file_path"]})
+        else:
+            metadata.update({"source_video_media_id": media["id"], "source_video_path": media["file_path"]})
+        self.store.update_scene(scene_id, metadata=metadata)
+        self.status_message.emit(f"Attached {media['kind']} to selected scene")
+
+    def _voice_service(self) -> VoiceFromContentService:
+        return VoiceFromContentService(
+            self.store,
+            self.providers,
+            Path(self.store.db_path).parent / "generated",
+        )
+
+    def _generate_selected_voice(self) -> None:
+        if not self.project_id:
+            self.status_message.emit("Open a project before generating voice")
+            return
+        scene_id = self._selected_scene_id()
+        if not scene_id:
+            self.status_message.emit("Select a scene first")
+            return
+        try:
+            provider_name = self._provider_name("tts")
+        except RuntimeError as exc:
+            self.status_message.emit(str(exc))
+            return
+        project_id = self.project_id
+        service = self._voice_service()
+        self._start_task(
+            lambda: service.synthesize_scene(project_id, scene_id, provider_name=provider_name),
+            started="Generating selected scene voice…",
+            success=lambda artifact: f"Voice ready · {Path(artifact.path).name}",
+        )
+
+    def _voice_from_content(self) -> None:
+        if not self.project_id:
+            self.status_message.emit("Open a project before generating voice")
+            return
+        try:
+            provider_name = self._provider_name("tts")
+        except RuntimeError as exc:
+            self.status_message.emit(str(exc))
+            return
+        project_id = self.project_id
+        service = self._voice_service()
+        self._start_task(
+            lambda: service.synthesize_project(project_id, provider_name=provider_name),
+            started="Voice From Content · generating project narration…",
+            success=lambda artifacts: f"Voice From Content complete · {len(artifacts)} scene(s)",
+        )
+
+    @staticmethod
+    def _analysis_paths(scene: dict) -> tuple[Path, Path]:
+        metadata = dict(scene.get("metadata") or {})
+        image_path = metadata.get("visual_path") or metadata.get("image_path")
+        voice_path = metadata.get("voice_path")
+        if not image_path:
+            raise ValueError("scene has no attached/generated image")
+        if not voice_path:
+            raise ValueError("scene has no attached/generated narration audio")
+        image = Path(str(image_path))
+        voice = Path(str(voice_path))
+        if not image.is_file():
+            raise ValueError(f"scene image is missing: {image}")
+        if not voice.is_file():
+            raise ValueError(f"scene narration audio is missing: {voice}")
+        return image, voice
+
+    def _analyze_scene_sync(self, scene_id: str) -> object:
+        if not self.project_id:
+            raise RuntimeError("No project open")
+        scene = self._scene_by_id(scene_id)
+        if scene is None:
+            raise KeyError(scene_id)
+        image_path, voice_path = self._analysis_paths(scene)
+        stt_name = self._provider_name("stt")
+        vision_name = self._provider_name("vision")
+        analyzer = ObjectVoiceAnalyzer(
+            self.providers.get(stt_name),
+            self.providers.get(vision_name),
+            cache_dir=Path(self.store.db_path).parent / "analysis-cache",
+        )
+        result = analyzer.analyze(
+            scene_id=scene_id,
+            image_bytes=image_path.read_bytes(),
+            audio_bytes=voice_path.read_bytes(),
+        )
+        metadata = merge_analysis_metadata(scene.get("metadata"), result.to_metadata())
+        self.store.update_scene(scene_id, metadata=metadata)
+        return result
+
+    def _analyze_selected_scene(self) -> None:
+        scene_id = self._selected_scene_id()
+        if not scene_id:
+            self.status_message.emit("Select a scene before AI Analyze")
+            return
+        try:
+            self._provider_name("stt")
+            self._provider_name("vision")
+        except RuntimeError as exc:
+            self.status_message.emit(str(exc))
+            return
+        self._start_task(
+            lambda: self._analyze_scene_sync(scene_id),
+            started="AI Analyze · mapping narration to visible objects…",
+            success=lambda result: f"AI Analyze complete · {len(result.objects)} object(s) grounded",
+        )
+
+    def _analyze_all_scenes(self) -> None:
+        if not self.project_id:
+            self.status_message.emit("Open a project before Analyze All")
+            return
+        try:
+            self._provider_name("stt")
+            self._provider_name("vision")
+        except RuntimeError as exc:
+            self.status_message.emit(str(exc))
+            return
+        scene_ids = [scene["id"] for scene in self.store.list_scenes(self.project_id)]
+
+        def task() -> tuple[int, int]:
+            completed = 0
+            skipped = 0
+            for scene_id in scene_ids:
+                try:
+                    self._analyze_scene_sync(scene_id)
+                except ValueError:
+                    skipped += 1
+                    continue
+                completed += 1
+            if completed == 0:
+                raise ValueError("no scenes have both image and narration audio")
+            return completed, skipped
+
+        self._start_task(
+            task,
+            started="Analyze All · processing eligible scenes…",
+            success=lambda counts: f"Analyze All complete · {counts[0]} analyzed · {counts[1]} skipped",
+        )
 
     def _export_media(self) -> None:
         if not self.project_id:
@@ -597,7 +844,9 @@ class LibraryPage(QWidget):
         outer.setContentsMargins(38, 28, 38, 28)
         outer.setSpacing(20)
         head = QHBoxLayout()
-        head.addWidget(_heading("Local library", "Projects that stay yours", "No expiry timer. No account gate. No cloud required."))
+        head.addWidget(
+            _heading("Local library", "Projects that stay yours", "No expiry timer. No account gate. No cloud required.")
+        )
         head.addStretch(1)
         refresh = QPushButton("Refresh")
         refresh.clicked.connect(self.refresh)
@@ -625,7 +874,9 @@ class LibraryPage(QWidget):
             empty = Surface(accent=True)
             layout = QVBoxLayout(empty)
             layout.setContentsMargins(28, 24, 28, 24)
-            layout.addWidget(SectionTitle("Ready when you are", "Nothing here yet", "Create a project and it will appear here automatically."))
+            layout.addWidget(
+                SectionTitle("Ready when you are", "Nothing here yet", "Create a project and it will appear here automatically.")
+            )
             self.grid.addWidget(empty, 0, 0, 1, 2)
             return
         for idx, project in enumerate(projects):
@@ -635,13 +886,20 @@ class LibraryPage(QWidget):
             layout.setContentsMargins(18, 16, 18, 16)
             title = QLabel(project.get("title") or "Untitled project")
             title.setObjectName("sectionTitle")
-            meta = QLabel(f"{project.get('output_w', 1280)} × {project.get('output_h', 720)}   ·   {project.get('expected_image_count', 0)} scenes")
+            meta = QLabel(
+                f"{project.get('output_w', 1280)} × {project.get('output_h', 720)}   ·   "
+                f"{project.get('expected_image_count', 0)} scenes"
+            )
             meta.setObjectName("muted")
             layout.addWidget(title)
             layout.addWidget(meta)
             layout.addStretch(1)
             open_button = QPushButton("Open in Studio")
-            open_button.clicked.connect(lambda _=False, p=project: self.open_project.emit(p["project_id"], p.get("title") or "Untitled project"))
+            open_button.clicked.connect(
+                lambda _=False, p=project: self.open_project.emit(
+                    p["project_id"], p.get("title") or "Untitled project"
+                )
+            )
             layout.addWidget(open_button)
             self.grid.addWidget(card, idx // 2, idx % 2)
 
@@ -662,7 +920,13 @@ class ProvidersPage(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(38, 28, 38, 28)
         outer.setSpacing(20)
-        outer.addWidget(_heading("Provider layer", "Bring the model you want", "Analysis and voice are capabilities, not hard-coded vendors."))
+        outer.addWidget(
+            _heading(
+                "Provider layer",
+                "Bring the model you want",
+                "AI Project, AI Analyze and voice use replaceable capabilities instead of hard-coded vendors.",
+            )
+        )
 
         safe = Surface(accent=True)
         safe_layout = QHBoxLayout(safe)
@@ -681,28 +945,35 @@ class ProvidersPage(QWidget):
         cfg = QGridLayout(config)
         cfg.setContentsMargins(20, 18, 20, 18)
         cfg.setHorizontalSpacing(16)
-        cfg.setVerticalSpacing(12)
-        cfg.addWidget(SectionTitle("API", "Connection settings", "Environment variables remain supported for automation."), 0, 0, 1, 2)
-        cfg.addWidget(QLabel("Analysis endpoint"), 1, 0)
-        self.ai_endpoint = QLineEdit(current.analysis_base_url)
-        self.ai_endpoint.setPlaceholderText("https://provider.example/v1")
-        cfg.addWidget(self.ai_endpoint, 1, 1)
-        cfg.addWidget(QLabel("Analysis model"), 2, 0)
-        self.ai_model = QLineEdit(current.analysis_model)
-        self.ai_model.setPlaceholderText("model-name")
-        cfg.addWidget(self.ai_model, 2, 1)
-        cfg.addWidget(QLabel("TTS endpoint"), 3, 0)
-        self.tts_endpoint = QLineEdit(current.tts_base_url)
-        self.tts_endpoint.setPlaceholderText("https://provider.example/v1")
-        cfg.addWidget(self.tts_endpoint, 3, 1)
-        cfg.addWidget(QLabel("TTS model"), 4, 0)
-        self.tts_model = QLineEdit(current.tts_model)
-        self.tts_model.setPlaceholderText("speech-model")
-        cfg.addWidget(self.tts_model, 4, 1)
+        cfg.setVerticalSpacing(10)
+        cfg.addWidget(
+            SectionTitle("API", "Connection settings", "Environment variables remain supported for automation."),
+            0,
+            0,
+            1,
+            2,
+        )
+
+        rows = [
+            ("Analysis endpoint", "ai_endpoint", current.analysis_base_url, "https://provider.example/v1"),
+            ("Analysis model", "ai_model", current.analysis_model, "text-analysis-model"),
+            ("Vision endpoint", "vision_endpoint", current.vision_base_url, "https://provider.example/v1"),
+            ("Vision model", "vision_model", current.vision_model, "vision-model"),
+            ("STT endpoint", "stt_endpoint", current.stt_base_url, "https://provider.example/v1"),
+            ("STT model", "stt_model", current.stt_model, "transcription-model"),
+            ("TTS endpoint", "tts_endpoint", current.tts_base_url, "https://provider.example/v1"),
+            ("TTS model", "tts_model", current.tts_model, "speech-model"),
+        ]
+        for row, (label, attr, value, placeholder) in enumerate(rows, start=1):
+            cfg.addWidget(QLabel(label), row, 0)
+            edit = QLineEdit(value)
+            edit.setPlaceholderText(placeholder)
+            setattr(self, attr, edit)
+            cfg.addWidget(edit, row, 1)
         save = QPushButton("Save locally")
         save.setObjectName("primary")
         save.clicked.connect(self._save_settings)
-        cfg.addWidget(save, 5, 1, alignment=Qt.AlignmentFlag.AlignRight)
+        cfg.addWidget(save, len(rows) + 1, 1, alignment=Qt.AlignmentFlag.AlignRight)
         outer.addWidget(config)
 
         status = Surface()
@@ -716,7 +987,11 @@ class ProvidersPage(QWidget):
                 row.addWidget(Dot("#54D49A"))
                 row.addWidget(QLabel(descriptor.name))
                 row.addStretch(1)
-                caps = [name for name in ("analysis", "tts", "clone", "design") if getattr(descriptor.capabilities, name)]
+                caps = [
+                    name
+                    for name in ("analysis", "vision", "stt", "tts", "clone", "design")
+                    if getattr(descriptor.capabilities, name)
+                ]
                 chip = QLabel(" · ".join(caps) or "registered")
                 chip.setObjectName("chip")
                 row.addWidget(chip)
@@ -732,6 +1007,10 @@ class ProvidersPage(QWidget):
         settings = ProviderSettings(
             analysis_base_url=self.ai_endpoint.text().strip(),
             analysis_model=self.ai_model.text().strip(),
+            vision_base_url=self.vision_endpoint.text().strip(),
+            vision_model=self.vision_model.text().strip(),
+            stt_base_url=self.stt_endpoint.text().strip(),
+            stt_model=self.stt_model.text().strip(),
             tts_base_url=self.tts_endpoint.text().strip(),
             tts_model=self.tts_model.text().strip(),
         )
