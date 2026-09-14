@@ -69,10 +69,8 @@ def test_enabled_left_outro_is_a_distinct_additive_phase_after_final_hold():
     plan = _plan(outro_enabled=True, outro_direction="left", outro_duration=0.4)
     segments = whiteboard.build_whiteboard_segments(plan)
 
-    assert [(segment.kind, segment.duration) for segment in segments][-2:] == [
-        ("hold", 1.5),
-        ("outro", 0.4),
-    ]
+    assert [segment.kind for segment in segments][-2:] == ["hold", "outro"]
+    assert [segment.duration for segment in segments][-2:] == pytest.approx([1.5, 0.4])
     assert segments[-1].before_ids == ("a", "b")
     assert segments[-1].after_ids == ("a", "b")
     assert segments[-1].direction == "left"
