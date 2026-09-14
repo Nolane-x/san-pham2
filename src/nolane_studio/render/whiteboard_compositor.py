@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from .compositor import CompositionError, render_scene_layer_snapshot
+from .effects import build_camera_filter_chain
 from .exporter import build_image_segment_command, resolve_ffmpeg_exe
 from .ffmpeg import SubprocessRunner
 from .scene_plan import SceneRenderPlan
@@ -314,6 +315,60 @@ def build_object_push_command(
     ]
 
 
+def build_scene_camera_command(
+    ffmpeg: str,
+    source: str,
+    output: str,
+    *,
+    camera: str,
+    duration: float,
+    width: int = 1280,
+    height: int = 720,
+    fps: int = 24,
+) -> list[str]:
+    """Apply recovered camera motion after object timing has been rendered."""
+    duration = float(duration)
+    if duration <= 0:
+        raise ValueError("camera duration must be > 0")
+    camera = str(camera).strip().lower().replace("-", "_")
+    if camera == "static":
+        raise ValueError("static camera does not require a postprocess command")
+    video_filter = build_camera_filter_chain(width, height, fps, camera)
+    return [
+        ffmpeg,
+        "-y",
+        "-i",
+        source,
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",
+        "-vf",
+        video_filter,
+        "-t",
+        f"{duration:.6f}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-threads",
+        "1",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-profile:v",
+        "high",
+        "-level",
+        "4.1",
+        "-c:a",
+        "copy",
+        "-movflags",
+        "+faststart",
+        output,
+    ]
+
+
 def _concat_escape(path: Path) -> str:
     return str(path.resolve()).replace("\\", "/").replace("'", "'\\''")
 
@@ -448,6 +503,12 @@ class WhiteboardSceneCompositor:
                 "".join(f"file '{_concat_escape(segment)}'\n" for segment in media_segments),
                 encoding="utf-8",
             )
+            camera = plan.profile.camera
+            concat_output = (
+                output_path
+                if camera == "static"
+                else temp / f"{output_path.stem}-pre-camera.mp4"
+            )
             self.runner.run(
                 [
                     self.ffmpeg,
@@ -462,7 +523,20 @@ class WhiteboardSceneCompositor:
                     "copy",
                     "-movflags",
                     "+faststart",
-                    str(output_path),
+                    str(concat_output),
                 ]
             )
+            if camera != "static":
+                self.runner.run(
+                    build_scene_camera_command(
+                        self.ffmpeg,
+                        str(concat_output),
+                        str(output_path),
+                        camera=camera,
+                        duration=plan.total_duration,
+                        width=width,
+                        height=height,
+                        fps=fps,
+                    )
+                )
         return output_path
