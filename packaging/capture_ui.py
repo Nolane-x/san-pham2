@@ -44,6 +44,7 @@ def main() -> int:
             Scene(1, "Move into the main explanation while the canvas keeps focus on the current concept."),
             Scene(2, "Close with a compact visual summary and a clean call to action."),
         ]
+        window.studio_page.store.create_project("preview", "Launch story")
         window.studio_page.load_project("preview", "Launch story", demo_scenes)
         window._navigate(1)
         app.processEvents()
