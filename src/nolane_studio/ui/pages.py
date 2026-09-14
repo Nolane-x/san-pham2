@@ -221,6 +221,8 @@ class StudioPage(QWidget):
         scenes_layout.setContentsMargins(14, 14, 14, 14)
         scenes_layout.addWidget(SectionTitle("Sequence", "Scenes"))
         self.scenes = QListWidget()
+        self.scenes.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scenes.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.scenes.addItem("Create a project to begin")
         scenes_layout.addWidget(self.scenes, 1)
         add_scene = QPushButton("+ Add scene")
@@ -304,8 +306,25 @@ class StudioPage(QWidget):
         duration.setObjectName("chip")
         top.addWidget(duration)
         timeline_layout.addLayout(top)
-        track = QHBoxLayout()
-        for i, width in enumerate((2, 3, 2, 4)):
+        self.timeline_track = QHBoxLayout()
+        timeline_layout.addLayout(self.timeline_track)
+        self._rebuild_timeline(1)
+
+        vertical.addWidget(workspace)
+        vertical.addWidget(timeline)
+        vertical.setStretchFactor(0, 1)
+        vertical.setStretchFactor(1, 0)
+        vertical.setSizes([600, 180])
+
+    def _rebuild_timeline(self, scene_count: int) -> None:
+        while self.timeline_track.count():
+            item = self.timeline_track.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        widths = (2, 3, 2, 4)
+        for i in range(max(1, scene_count)):
             clip = QFrame()
             clip.setObjectName("surfaceRaised")
             clip.setMinimumHeight(48)
@@ -315,31 +334,28 @@ class StudioPage(QWidget):
             label = QLabel(f"Scene {i + 1}")
             label.setStyleSheet("font-weight:650;color:#DCE2ED")
             clip_l.addWidget(label)
-            track.addWidget(clip, width)
-        timeline_layout.addLayout(track)
-
-        vertical.addWidget(workspace)
-        vertical.addWidget(timeline)
-        vertical.setStretchFactor(0, 1)
-        vertical.setStretchFactor(1, 0)
-        vertical.setSizes([600, 180])
+            self.timeline_track.addWidget(clip, widths[i % len(widths)])
 
     def load_project(self, project_id: str, title: str, scenes: list) -> None:
         self.project_id = project_id
         self.project_label.setText(title)
         self.scenes.clear()
         if scenes:
+            timeline_scene_count = len(scenes)
             for scene in scenes:
                 excerpt = scene.text if len(scene.text) <= 58 else scene.text[:55].rstrip() + "…"
                 self.scenes.addItem(f"{scene.index + 1:02d}  {excerpt}")
         else:
             items = self.store.list_items(project_id)
             if items:
+                timeline_scene_count = len(items)
                 for index, item in enumerate(items):
                     self.scenes.addItem(f"{index + 1:02d}  {item['original_filename']}")
             else:
+                timeline_scene_count = 1
                 self.scenes.addItem("01  Blank scene")
         self.scenes.setCurrentRow(0)
+        self._rebuild_timeline(timeline_scene_count)
         self._refresh_media()
 
     def _refresh_media(self) -> None:
