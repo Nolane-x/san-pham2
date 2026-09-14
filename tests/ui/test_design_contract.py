@@ -1,4 +1,4 @@
-from nolane_studio.ui.design import NAV_ITEMS, PRODUCT_NAME, ThemeTokens, workspace_spec
+from nolane_studio.ui.design import NAV_ITEMS, PRODUCT_NAME, ThemeTokens, qss, workspace_spec
 
 
 def test_new_product_identity_is_stable():
@@ -22,3 +22,10 @@ def test_studio_workspace_preserves_creator_information_architecture():
     assert spec["center"] == "Canvas"
     assert spec["right_rail"] == "Inspector"
     assert spec["bottom"] == "Timeline"
+
+
+def test_global_stylesheet_uses_native_font_fallback():
+    """Do not force a family that can render as tofu on headless Windows."""
+    sheet = qss()
+    global_rule = sheet.split("}", 1)[0]
+    assert "font-family" not in global_rule
