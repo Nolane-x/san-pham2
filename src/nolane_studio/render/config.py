@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+_KNOWN = {
+    "style", "visual_mode", "reveal_duration", "hold_duration", "brush_mode",
+    "custom_draw_points", "large_object_push_enabled", "large_object_push_direction",
+    "large_object_push_mode", "custom_object_push_config", "custom_object_effect_config",
+    "custom_object_sound_config", "custom_camera_enabled", "custom_camera_config",
+    "object_timing_mode", "custom_object_timing_config", "outro_enabled", "outro_direction",
+    "outro_duration", "hand_style", "remove_background_enabled", "auto_object_fx_enabled",
+    "auto_object_fx_config", "image_motion_config", "batch_voice_segments",
+}
+
+
+def _float(value: Any, default: float, low: float, high: float) -> float:
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        value = default
+    return max(low, min(high, value))
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
+    incoming = dict(raw or {})
+    visual_mode = str(incoming.get("visual_mode", "drawing") or "drawing").strip().lower()
+    if visual_mode not in {"drawing", "camera_motion"}:
+        visual_mode = "drawing"
+    style = str(incoming.get("style", "whiteboard") or "whiteboard").strip().lower()
+    if style not in {"whiteboard", "color_reveal"}:
+        style = "whiteboard"
+
+    config = {
+        "style": style,
+        "visual_mode": visual_mode,
+        "reveal_duration": _float(incoming.get("reveal_duration", 8.0), 8.0, 0.0, 3600.0),
+        "hold_duration": _float(incoming.get("hold_duration", 1.0), 1.0, 0.0, 3600.0),
+        "brush_mode": str(incoming.get("brush_mode", "lr") or "lr"),
+        "custom_draw_points": list(incoming.get("custom_draw_points") or []),
+        "large_object_push_enabled": _truthy(incoming.get("large_object_push_enabled", False)),
+        "large_object_push_direction": str(incoming.get("large_object_push_direction", "from_left") or "from_left"),
+        "large_object_push_mode": str(incoming.get("large_object_push_mode", "automatic") or "automatic"),
+        "custom_object_push_config": list(incoming.get("custom_object_push_config") or []),
+        "custom_object_effect_config": list(incoming.get("custom_object_effect_config") or []),
+        "custom_object_sound_config": list(incoming.get("custom_object_sound_config") or []),
+        "custom_camera_enabled": _truthy(incoming.get("custom_camera_enabled", False)),
+        "custom_camera_config": list(incoming.get("custom_camera_config") or []),
+        "object_timing_mode": str(incoming.get("object_timing_mode", "fixed") or "fixed"),
+        "custom_object_timing_config": list(incoming.get("custom_object_timing_config") or []),
+        "outro_enabled": _truthy(incoming.get("outro_enabled", False)),
+        "outro_direction": str(incoming.get("outro_direction", "left") or "left"),
+        "outro_duration": _float(incoming.get("outro_duration", 0.3), 0.3, 0.0, 5.0),
+        "hand_style": str(incoming.get("hand_style", "hand-1.png") or "hand-1.png"),
+        "remove_background_enabled": _truthy(incoming.get("remove_background_enabled", False)),
+        "auto_object_fx_enabled": _truthy(incoming.get("auto_object_fx_enabled", False)),
+        "auto_object_fx_config": dict(incoming.get("auto_object_fx_config") or {}),
+        "image_motion_config": dict(incoming.get("image_motion_config") or {}),
+        "batch_voice_segments": list(incoming.get("batch_voice_segments") or []),
+        "extras": {k: v for k, v in incoming.items() if k not in _KNOWN},
+    }
+    return config

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nolane-studio"
+version = "0.1.0"
+description = "Local-first AI-assisted video and visual storytelling studio"
+requires-python = ">=3.10"
+dependencies = ["imageio-ffmpeg>=0.6.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+ui = ["PySide6>=6.7"]
+build = ["PyInstaller>=6.10", "Pillow>=11"]
+
+[project.scripts]
+nolane-studio = "nolane_studio.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

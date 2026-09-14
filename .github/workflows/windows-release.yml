@@ -1,0 +1,179 @@
+name: Windows build and release
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install project and build tools
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,ui,build]"
+
+      - name: Test
+        shell: pwsh
+        run: python -m pytest -q
+
+      - name: Generate new product icon
+        shell: pwsh
+        run: python packaging/create_icon.py --output packaging/windows/NolaneStudio.ico
+
+      - name: Capture NUI rendered evidence
+        shell: pwsh
+        run: python packaging/capture_ui.py --output-dir artifacts/ui
+
+      - name: Build portable Windows executable
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --onefile --windowed `
+            --name NolaneStudio `
+            --icon packaging/windows/NolaneStudio.ico `
+            --paths src `
+            --collect-all imageio_ffmpeg `
+            launcher.py
+
+      - name: Smoke-test portable executable
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath ".\dist\NolaneStudio.exe" -ArgumentList "--smoke-test" -PassThru
+          if (-not $process.WaitForExit(20000)) {
+            $process.Kill()
+            throw "Portable NolaneStudio.exe smoke test timed out"
+          }
+          if ($process.ExitCode -ne 0) {
+            throw "Portable NolaneStudio.exe smoke test failed with exit code $($process.ExitCode)"
+          }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" packaging\windows\NolaneStudio.iss
+
+      - name: Smoke-test silent installer and installed executable
+        shell: pwsh
+        run: |
+          $version = python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])"
+          $installDir = Join-Path $env:RUNNER_TEMP "NolaneStudioSmoke"
+          $setup = Resolve-Path "artifacts\NolaneStudio-Setup-$version.exe"
+          $installer = Start-Process -FilePath $setup -ArgumentList @(
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/SP-",
+            "/DIR=$installDir"
+          ) -PassThru -Wait
+          if ($installer.ExitCode -ne 0) {
+            throw "Silent installer failed with exit code $($installer.ExitCode)"
+          }
+          $installedExe = Join-Path $installDir "NolaneStudio.exe"
+          if (-not (Test-Path $installedExe)) {
+            throw "Installed executable was not created at $installedExe"
+          }
+          $process = Start-Process -FilePath $installedExe -ArgumentList "--smoke-test" -PassThru
+          if (-not $process.WaitForExit(20000)) {
+            $process.Kill()
+            throw "Installed NolaneStudio.exe smoke test timed out"
+          }
+          if ($process.ExitCode -ne 0) {
+            throw "Installed NolaneStudio.exe smoke test failed with exit code $($process.ExitCode)"
+          }
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          if (Test-Path $uninstaller) {
+            $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @(
+              "/VERYSILENT",
+              "/SUPPRESSMSGBOXES",
+              "/NORESTART"
+            ) -PassThru -Wait
+            if ($uninstall.ExitCode -ne 0) {
+              throw "Silent uninstaller failed with exit code $($uninstall.ExitCode)"
+            }
+          }
+
+      - name: Package portable build and checksums
+        shell: pwsh
+        run: |
+          $version = python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])"
+          Compress-Archive -Path dist\NolaneStudio.exe -DestinationPath "artifacts\NolaneStudio-Windows-x64-$version.zip" -Force
+          $files = @(
+            "dist\NolaneStudio.exe",
+            "artifacts\NolaneStudio-Windows-x64-$version.zip",
+            "artifacts\NolaneStudio-Setup-$version.exe"
+          )
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+            "$hash  $([IO.Path]::GetFileName($file))"
+          }
+          $manifestPath = "artifacts\SHA256SUMS.txt"
+          $lines | Set-Content -Encoding ascii $manifestPath
+
+          $manifest = @{}
+          foreach ($line in Get-Content $manifestPath) {
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)$') {
+              throw "Malformed checksum manifest line: $line"
+            }
+            $manifest[$Matches[2]] = $Matches[1]
+          }
+          foreach ($file in $files) {
+            $name = [IO.Path]::GetFileName($file)
+            $actual = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+            if (-not $manifest.ContainsKey($name) -or $manifest[$name] -ne $actual) {
+              throw "Checksum verification failed for $name"
+            }
+          }
+
+      - name: Upload Windows verification artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nolane-studio-windows
+          path: |
+            dist/NolaneStudio.exe
+            artifacts/NolaneStudio-Windows-x64-*.zip
+            artifacts/NolaneStudio-Setup-*.exe
+            artifacts/SHA256SUMS.txt
+            artifacts/ui/*.png
+          if-no-files-found: error
+
+      - name: Publish GitHub release from main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])"
+          $tag = "v$version"
+          $assets = @(
+            "dist\NolaneStudio.exe",
+            "artifacts\NolaneStudio-Windows-x64-$version.zip",
+            "artifacts\NolaneStudio-Setup-$version.exe",
+            "artifacts\SHA256SUMS.txt"
+          )
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @assets --clobber
+          } else {
+            gh release create $tag @assets --target $env:GITHUB_SHA --title "Nolane Studio $tag" --notes-file RELEASE_NOTES.md
+          }
