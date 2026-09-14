@@ -204,6 +204,21 @@ def _camera_filter(width: int, height: int, fps: int, camera: str) -> str:
     )
 
 
+def build_camera_filter_chain(width: int, height: int, fps: int, camera: str) -> str:
+    """Return the shared normalization + recovered camera-motion filter chain."""
+    width = max(2, int(width))
+    height = max(2, int(height))
+    if width % 2:
+        width -= 1
+    if height % 2:
+        height -= 1
+    fps = max(1, int(fps))
+    camera = str(camera).strip().lower().replace("-", "_")
+    if camera not in {"static", "slow_zoom", "pan_left", "pan_right"}:
+        raise ValueError("camera must be static, slow_zoom, pan_left, or pan_right")
+    return _normalization(width, height, fps) + _camera_filter(width, height, fps, camera)
+
+
 def build_image_filter_graph(
     width: int,
     height: int,
@@ -230,7 +245,7 @@ def build_image_filter_graph(
     if total <= 0:
         raise ValueError("total_duration must be > 0")
     reveal = min(profile.reveal_duration, total)
-    base = _normalization(width, height, fps) + _camera_filter(width, height, fps, profile.camera)
+    base = build_camera_filter_chain(width, height, fps, profile.camera)
 
     if profile.style == "static" or reveal <= 0:
         return f"[0:v]{base},trim=duration={total:.6f},setpts=PTS-STARTPTS[outv]"
