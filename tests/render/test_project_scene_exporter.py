@@ -8,6 +8,7 @@ from nolane_studio.domain import Scene
 from nolane_studio.render import project_export
 from nolane_studio.render.compositor import CompositionRequiresVideo
 from nolane_studio.render.project_export import ProjectSceneExporter
+from nolane_studio.render.whiteboard_compositor import UnsupportedWhiteboardMotion
 from nolane_studio.storage.store import ProjectStore
 
 
@@ -206,6 +207,61 @@ def test_project_exporter_propagates_video_compositor_refusal(tmp_path):
     with pytest.raises(CompositionRequiresVideo, match="refused"):
         exporter.export("p1", tmp_path / "never.mp4")
     assert media.calls == []
+
+
+def test_project_exporter_fails_closed_before_video_renderer_for_whiteboard_source_video(tmp_path):
+    store, first, _second = _store(tmp_path)
+    store.add_visual_object(first["id"], "video", name="Video", source="clip.mp4")
+    media = FakeMediaExporter()
+    video_calls = []
+
+    def video_renderer(plan, output, **kwargs):
+        video_calls.append((plan.scene_id, kwargs))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=_touch_snapshot,
+        video_renderer=video_renderer,
+        whiteboard_renderer=_touch_whiteboard,
+    )
+
+    with pytest.raises(UnsupportedWhiteboardMotion, match="source-video"):
+        exporter.export("p1", tmp_path / "never.mp4")
+
+    assert video_calls == []
+    assert media.calls == []
+
+
+def test_project_exporter_keeps_color_reveal_source_video_on_video_renderer(tmp_path):
+    store, _first, second = _store(tmp_path)
+    store.add_visual_object(second["id"], "video", name="Video", source="clip.mp4")
+    media = FakeMediaExporter()
+    video_calls = []
+
+    def video_renderer(plan, output, **kwargs):
+        video_calls.append((plan.scene_id, kwargs))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=_touch_snapshot,
+        video_renderer=video_renderer,
+        whiteboard_renderer=_touch_whiteboard,
+    )
+
+    exporter.export("p1", tmp_path / "color-video.mp4")
+
+    assert video_calls == [(second["id"], {"width": 1280, "height": 720, "fps": 24})]
+    clips = media.calls[0][0]
+    assert [clip.clip_id for clip in clips] == [store.list_scenes("p1")[0]["id"], second["id"]]
+    assert [clip.kind for clip in clips] == ["video", "video"]
 
 
 def test_project_exporter_rejects_project_without_scenes(tmp_path):
