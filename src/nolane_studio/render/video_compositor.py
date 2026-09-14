@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import tempfile
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
@@ -35,6 +36,41 @@ def _visible_objects(plan: SceneRenderPlan) -> list[dict[str, object]]:
         (dict(obj) for obj in plan.objects if bool(obj.get("visible", True))),
         key=lambda obj: (int(obj.get("z_index", 0)), str(obj.get("id", ""))),
     )
+
+
+def _rotation_layout(
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    rotation_degrees: float,
+) -> tuple[float, float, float] | None:
+    """Map Canvas/QPainter top-left-pivot rotation to FFmpeg rotate + overlay.
+
+    Qt visual objects rotate around local ``(0, 0)`` by default. FFmpeg's
+    ``rotate`` filter expands around the source center when ``rotw/roth`` are
+    used, so the expanded bounding box must be shifted by the minimum extents
+    of the same rectangle rotated around the origin before overlaying it.
+    """
+    if not math.isfinite(rotation_degrees):
+        raise UnsupportedVideoComposition("video rotation must be finite")
+
+    normalized = math.fmod(rotation_degrees, 360.0)
+    if abs(normalized) <= 1e-9:
+        return None
+
+    angle = math.radians(normalized)
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    corners = (
+        (0.0, 0.0),
+        (width * cos_a, width * sin_a),
+        (-height * sin_a, height * cos_a),
+        (width * cos_a - height * sin_a, width * sin_a + height * cos_a),
+    )
+    min_x = min(point[0] for point in corners)
+    min_y = min(point[1] for point in corners)
+    return angle, x + min_x, y + min_y
 
 
 class SceneVideoCompositor:
@@ -84,16 +120,14 @@ class SceneVideoCompositor:
         if not source.is_file():
             raise FileNotFoundError(f"scene video source not found: {source}")
 
-        rotation = _number(video.get("rotation"), 0.0)
-        if abs(rotation) > 1e-9:
-            raise UnsupportedVideoComposition("rotated video layers are not yet supported")
-
         canvas_w = _even(width, 1280)
         canvas_h = _even(height, 720)
         video_w = _even(video.get("width"), 640)
         video_h = _even(video.get("height"), 360)
-        x = int(round(_number(video.get("x"), 0.0)))
-        y = int(round(_number(video.get("y"), 0.0)))
+        x = _number(video.get("x"), 0.0)
+        y = _number(video.get("y"), 0.0)
+        rotation = _number(video.get("rotation"), 0.0)
+        rotation_layout = _rotation_layout(x, y, video_w, video_h, rotation)
         opacity = max(0.0, min(1.0, _number(video.get("opacity"), 1.0)))
         total = max(0.001, float(plan.total_duration))
         fps = max(1, int(fps))
@@ -149,12 +183,28 @@ class SceneVideoCompositor:
                     "anullsrc=channel_layout=stereo:sample_rate=48000",
                 ]
 
+            video_filters = f"[1:v]scale={video_w}:{video_h},setsar=1,"
+            if rotation_layout is None:
+                overlay_x = str(int(round(x)))
+                overlay_y = str(int(round(y)))
+            else:
+                angle, overlay_x_value, overlay_y_value = rotation_layout
+                video_filters += (
+                    f"format=rgba,rotate={angle:.9f}:"
+                    "ow='rotw(iw)':oh='roth(ih)':c=none,"
+                )
+                overlay_x = f"{overlay_x_value:.6f}"
+                overlay_y = f"{overlay_y_value:.6f}"
+            video_filters += (
+                f"colorchannelmixer=aa={opacity:.6f},setpts=PTS-STARTPTS[video];"
+            )
+
             graph = (
                 f"[0:v]scale={canvas_w}:{canvas_h},setsar=1,"
                 f"trim=duration={total:.6f},setpts=PTS-STARTPTS[base];"
-                f"[1:v]scale={video_w}:{video_h},setsar=1,"
-                f"colorchannelmixer=aa={opacity:.6f},setpts=PTS-STARTPTS[video];"
-                f"[base][video]overlay=x={x}:y={y}:eof_action=repeat:shortest=0[mid];"
+                f"{video_filters}"
+                f"[base][video]overlay=x={overlay_x}:y={overlay_y}:"
+                "eof_action=repeat:shortest=0[mid];"
                 f"[2:v]scale={canvas_w}:{canvas_h},setsar=1,"
                 f"trim=duration={total:.6f},setpts=PTS-STARTPTS[front];"
                 f"[mid][front]overlay=x=0:y=0:eof_action=repeat:shortest=0,"
