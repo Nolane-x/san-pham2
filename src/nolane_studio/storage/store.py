@@ -11,6 +11,8 @@ from .schema import SCHEMA_SQL
 
 
 class ProjectStore:
+    _VISUAL_OBJECT_KINDS = {"image", "video", "text", "shape", "drawing"}
+
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
 
@@ -291,6 +293,244 @@ class ProjectStore:
                 (project_id, position),
             )
             self._sync_scene_count(conn, project_id)
+
+    @classmethod
+    def _normalize_visual_object_values(
+        cls,
+        *,
+        kind: str,
+        width: float,
+        height: float,
+        opacity: float,
+    ) -> tuple[str, float, float, float]:
+        normalized_kind = str(kind).strip().lower()
+        if normalized_kind not in cls._VISUAL_OBJECT_KINDS:
+            allowed = ", ".join(sorted(cls._VISUAL_OBJECT_KINDS))
+            raise ValueError(f"kind must be one of: {allowed}")
+        width_value = float(width)
+        height_value = float(height)
+        opacity_value = float(opacity)
+        if width_value <= 0:
+            raise ValueError("width must be > 0")
+        if height_value <= 0:
+            raise ValueError("height must be > 0")
+        if not 0.0 <= opacity_value <= 1.0:
+            raise ValueError("opacity must be within 0..1")
+        return normalized_kind, width_value, height_value, opacity_value
+
+    @staticmethod
+    def _touch_project_for_scene(conn: sqlite3.Connection, scene_id: str) -> None:
+        row = conn.execute("SELECT project_id FROM visual_editor_scenes WHERE id=?", (scene_id,)).fetchone()
+        if row is None:
+            return
+        project_id = str(row["project_id"])
+        conn.execute(
+            "UPDATE user_project_library SET updated_at=CURRENT_TIMESTAMP WHERE project_id=?",
+            (project_id,),
+        )
+
+    def add_visual_object(
+        self,
+        scene_id: str,
+        kind: str,
+        *,
+        name: str = "",
+        source: str = "",
+        x: float = 0.0,
+        y: float = 0.0,
+        width: float = 320.0,
+        height: float = 180.0,
+        rotation: float = 0.0,
+        opacity: float = 1.0,
+        visible: bool = True,
+        locked: bool = False,
+        payload: Mapping[str, Any] | None = None,
+        z_index: int | None = None,
+    ) -> str:
+        normalized_kind, width_value, height_value, opacity_value = self._normalize_visual_object_values(
+            kind=kind,
+            width=width,
+            height=height,
+            opacity=opacity,
+        )
+        with self._connect() as conn:
+            if conn.execute("SELECT 1 FROM visual_editor_scenes WHERE id=?", (scene_id,)).fetchone() is None:
+                raise KeyError(scene_id)
+            count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM visual_editor_objects WHERE scene_id=?",
+                    (scene_id,),
+                ).fetchone()[0]
+            )
+            target = count if z_index is None else int(z_index)
+            if target < 0 or target > count:
+                raise ValueError(f"z_index must be within 0..{count}")
+            conn.execute(
+                "UPDATE visual_editor_objects SET z_index=z_index+1, updated_at=CURRENT_TIMESTAMP WHERE scene_id=? AND z_index>=?",
+                (scene_id, target),
+            )
+            object_id = uuid.uuid4().hex
+            conn.execute(
+                """INSERT INTO visual_editor_objects(
+                       id,scene_id,z_index,kind,name,source,x,y,width,height,rotation,
+                       opacity,visible,locked,payload_json
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    object_id,
+                    scene_id,
+                    target,
+                    normalized_kind,
+                    str(name or ""),
+                    str(source or ""),
+                    float(x),
+                    float(y),
+                    width_value,
+                    height_value,
+                    float(rotation),
+                    opacity_value,
+                    1 if visible else 0,
+                    1 if locked else 0,
+                    json.dumps(dict(payload or {}), ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+            self._touch_project_for_scene(conn, scene_id)
+            return object_id
+
+    def list_visual_objects(self, scene_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM visual_editor_objects WHERE scene_id=? ORDER BY z_index, rowid",
+                (scene_id,),
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["visible"] = bool(item["visible"])
+            item["locked"] = bool(item["locked"])
+            item["payload"] = json.loads(item.pop("payload_json") or "{}")
+            result.append(item)
+        return result
+
+    def update_visual_object(
+        self,
+        object_id: str,
+        *,
+        name: str | None = None,
+        source: str | None = None,
+        x: float | None = None,
+        y: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+        rotation: float | None = None,
+        opacity: float | None = None,
+        visible: bool | None = None,
+        locked: bool | None = None,
+        payload: Mapping[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM visual_editor_objects WHERE id=?", (object_id,)).fetchone()
+            if row is None:
+                raise KeyError(object_id)
+            _, width_value, height_value, opacity_value = self._normalize_visual_object_values(
+                kind=str(row["kind"]),
+                width=float(row["width"]) if width is None else float(width),
+                height=float(row["height"]) if height is None else float(height),
+                opacity=float(row["opacity"]) if opacity is None else float(opacity),
+            )
+            updates: list[str] = []
+            values: list[Any] = []
+            for column, value in (
+                ("name", None if name is None else str(name)),
+                ("source", None if source is None else str(source)),
+                ("x", None if x is None else float(x)),
+                ("y", None if y is None else float(y)),
+                ("rotation", None if rotation is None else float(rotation)),
+            ):
+                if value is not None:
+                    updates.append(f"{column}=?")
+                    values.append(value)
+            if width is not None:
+                updates.append("width=?")
+                values.append(width_value)
+            if height is not None:
+                updates.append("height=?")
+                values.append(height_value)
+            if opacity is not None:
+                updates.append("opacity=?")
+                values.append(opacity_value)
+            if visible is not None:
+                updates.append("visible=?")
+                values.append(1 if visible else 0)
+            if locked is not None:
+                updates.append("locked=?")
+                values.append(1 if locked else 0)
+            if payload is not None:
+                updates.append("payload_json=?")
+                values.append(json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":")))
+            if not updates:
+                return
+            updates.append("updated_at=CURRENT_TIMESTAMP")
+            values.append(object_id)
+            conn.execute(f"UPDATE visual_editor_objects SET {', '.join(updates)} WHERE id=?", values)
+            self._touch_project_for_scene(conn, str(row["scene_id"]))
+
+    def move_visual_object(self, object_id: str, new_z_index: int) -> None:
+        target = int(new_z_index)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT scene_id, z_index FROM visual_editor_objects WHERE id=?",
+                (object_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(object_id)
+            scene_id = str(row["scene_id"])
+            current = int(row["z_index"])
+            count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM visual_editor_objects WHERE scene_id=?",
+                    (scene_id,),
+                ).fetchone()[0]
+            )
+            if target < 0 or target >= count:
+                raise ValueError(f"z_index must be within 0..{max(0, count - 1)}")
+            if target == current:
+                return
+            if current < target:
+                conn.execute(
+                    """UPDATE visual_editor_objects
+                       SET z_index=z_index-1, updated_at=CURRENT_TIMESTAMP
+                       WHERE scene_id=? AND z_index>? AND z_index<=?""",
+                    (scene_id, current, target),
+                )
+            else:
+                conn.execute(
+                    """UPDATE visual_editor_objects
+                       SET z_index=z_index+1, updated_at=CURRENT_TIMESTAMP
+                       WHERE scene_id=? AND z_index>=? AND z_index<?""",
+                    (scene_id, target, current),
+                )
+            conn.execute(
+                "UPDATE visual_editor_objects SET z_index=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (target, object_id),
+            )
+            self._touch_project_for_scene(conn, scene_id)
+
+    def delete_visual_object(self, object_id: str) -> None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT scene_id, z_index FROM visual_editor_objects WHERE id=?",
+                (object_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(object_id)
+            scene_id = str(row["scene_id"])
+            z_index = int(row["z_index"])
+            conn.execute("DELETE FROM visual_editor_objects WHERE id=?", (object_id,))
+            conn.execute(
+                "UPDATE visual_editor_objects SET z_index=z_index-1, updated_at=CURRENT_TIMESTAMP WHERE scene_id=? AND z_index>?",
+                (scene_id, z_index),
+            )
+            self._touch_project_for_scene(conn, scene_id)
 
     def add_item(
         self,
