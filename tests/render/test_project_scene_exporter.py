@@ -67,20 +67,21 @@ def test_project_exporter_composes_scenes_in_persisted_order_and_keeps_workspace
     assert all(not Path(clip.path).exists() for clip in clips)
 
 
-def test_project_exporter_propagates_video_composition_requirement(tmp_path):
+def test_project_exporter_propagates_video_compositor_refusal(tmp_path):
     store, first, _second = _store(tmp_path)
     store.add_visual_object(first["id"], "video", name="Video", source="clip.mp4")
     media = FakeMediaExporter()
 
-    def snapshot(plan, output):
-        if any(obj["kind"] == "video" for obj in plan.objects):
-            raise CompositionRequiresVideo("video path required")
-        Path(output).write_bytes(b"png")
-        return Path(output)
+    def video_renderer(plan, output, **kwargs):
+        raise CompositionRequiresVideo("video path refused")
 
-    exporter = ProjectSceneExporter(store, media_exporter=media, snapshot_renderer=snapshot)
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        video_renderer=video_renderer,
+    )
 
-    with pytest.raises(CompositionRequiresVideo):
+    with pytest.raises(CompositionRequiresVideo, match="refused"):
         exporter.export("p1", tmp_path / "never.mp4")
     assert media.calls == []
 
