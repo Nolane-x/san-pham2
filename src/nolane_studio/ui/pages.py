@@ -170,7 +170,9 @@ class CreatePage(QWidget):
     def _persist_and_emit(self, scenes: list) -> None:
         title = self.title_edit.text().strip() or "Untitled project"
         project_id = uuid.uuid4().hex[:12]
-        self.store.create_project(project_id, title, expected_image_count=len(scenes))
+        self.store.create_project(project_id, title, expected_image_count=0)
+        if scenes:
+            self.store.replace_scenes(project_id, scenes)
         self.project_created.emit(project_id, title, scenes)
 
 
@@ -219,15 +221,41 @@ class StudioPage(QWidget):
         scenes_panel.setMaximumWidth(300)
         scenes_layout = QVBoxLayout(scenes_panel)
         scenes_layout.setContentsMargins(14, 14, 14, 14)
+        scenes_layout.setSpacing(8)
         scenes_layout.addWidget(SectionTitle("Sequence", "Scenes"))
         self.scenes = QListWidget()
         self.scenes.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scenes.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.scenes.addItem("Create a project to begin")
+        self.scenes.currentItemChanged.connect(self._load_selected_scene_editor)
         scenes_layout.addWidget(self.scenes, 1)
-        add_scene = QPushButton("+ Add scene")
-        scenes_layout.addWidget(add_scene)
+
+        self.add_scene_button = QPushButton("+ Add scene")
+        self.add_scene_button.clicked.connect(self._add_scene)
+        scenes_layout.addWidget(self.add_scene_button)
+        scene_actions = QHBoxLayout()
+        scene_actions.setSpacing(5)
+        self.duplicate_scene_button = QPushButton("Duplicate")
+        self.duplicate_scene_button.setObjectName("ghost")
+        self.duplicate_scene_button.clicked.connect(self._duplicate_selected_scene)
+        self.move_scene_up_button = QPushButton("↑")
+        self.move_scene_up_button.setObjectName("ghost")
+        self.move_scene_up_button.setToolTip("Move selected scene up")
+        self.move_scene_up_button.clicked.connect(lambda: self._move_selected_scene(-1))
+        self.move_scene_down_button = QPushButton("↓")
+        self.move_scene_down_button.setObjectName("ghost")
+        self.move_scene_down_button.setToolTip("Move selected scene down")
+        self.move_scene_down_button.clicked.connect(lambda: self._move_selected_scene(1))
+        self.delete_scene_button = QPushButton("Delete")
+        self.delete_scene_button.setObjectName("ghost")
+        self.delete_scene_button.clicked.connect(self._delete_selected_scene)
+        scene_actions.addWidget(self.duplicate_scene_button, 1)
+        scene_actions.addWidget(self.move_scene_up_button)
+        scene_actions.addWidget(self.move_scene_down_button)
+        scene_actions.addWidget(self.delete_scene_button, 1)
+        scenes_layout.addLayout(scene_actions)
         scenes_layout.addSpacing(8)
+
         media_header = QHBoxLayout()
         media_title = QLabel("Media")
         media_title.setObjectName("sectionTitle")
@@ -270,6 +298,19 @@ class StudioPage(QWidget):
         tabs = QComboBox()
         tabs.addItems(["Drawing", "Motion", "Voice", "Timing"])
         inspector_layout.addWidget(tabs)
+
+        scene_text_label = QLabel("Scene text")
+        scene_text_label.setObjectName("muted")
+        inspector_layout.addWidget(scene_text_label)
+        self.scene_text_edit = QTextEdit()
+        self.scene_text_edit.setPlaceholderText("Select a scene to edit its narration or description")
+        self.scene_text_edit.setMinimumHeight(92)
+        inspector_layout.addWidget(self.scene_text_edit)
+        save_scene = QPushButton("Save scene")
+        save_scene.setObjectName("primary")
+        save_scene.clicked.connect(self._save_selected_scene)
+        inspector_layout.addWidget(save_scene)
+
         for label, value in (("Reveal", "8.0 s"), ("Hold", "1.0 s"), ("Brush", "Left → right"), ("Camera", "Static")):
             row = QFrame()
             lay = QHBoxLayout(row)
@@ -293,7 +334,7 @@ class StudioPage(QWidget):
         workspace.setStretchFactor(0, 0)
         workspace.setStretchFactor(1, 1)
         workspace.setStretchFactor(2, 0)
-        workspace.setSizes([235, 760, 285])
+        workspace.setSizes([260, 735, 285])
 
         timeline = Surface()
         timeline.setMinimumHeight(155)
@@ -336,27 +377,137 @@ class StudioPage(QWidget):
             clip_l.addWidget(label)
             self.timeline_track.addWidget(clip, widths[i % len(widths)])
 
+    def _selected_scene_id(self) -> str | None:
+        item = self.scenes.currentItem()
+        if item is None:
+            return None
+        value = item.data(Qt.ItemDataRole.UserRole)
+        return str(value) if value else None
+
+    def _scene_by_id(self, scene_id: str | None) -> dict | None:
+        if not self.project_id or not scene_id:
+            return None
+        return next((scene for scene in self.store.list_scenes(self.project_id) if scene["id"] == scene_id), None)
+
+    def _refresh_scenes(self, *, selected_id: str | None = None, fallback_row: int = 0) -> None:
+        if not self.project_id:
+            return
+        rows = self.store.list_scenes(self.project_id)
+        self.scenes.blockSignals(True)
+        self.scenes.clear()
+        selected_row = -1
+        for row_index, scene in enumerate(rows):
+            excerpt = scene["text"] if len(scene["text"]) <= 58 else scene["text"][:55].rstrip() + "…"
+            self.scenes.addItem(f"{row_index + 1:02d}  {excerpt}")
+            item = self.scenes.item(row_index)
+            item.setData(Qt.ItemDataRole.UserRole, scene["id"])
+            if selected_id and scene["id"] == selected_id:
+                selected_row = row_index
+        if rows:
+            if selected_row < 0:
+                selected_row = max(0, min(int(fallback_row), len(rows) - 1))
+            self.scenes.setCurrentRow(selected_row)
+        self.scenes.blockSignals(False)
+        self._rebuild_timeline(len(rows))
+        self._load_selected_scene_editor(self.scenes.currentItem(), None)
+
+    def _load_selected_scene_editor(self, current, previous) -> None:
+        del previous
+        if current is None:
+            self.scene_text_edit.clear()
+            self.scene_text_edit.setEnabled(False)
+            return
+        scene = self._scene_by_id(current.data(Qt.ItemDataRole.UserRole))
+        if scene is None:
+            self.scene_text_edit.clear()
+            self.scene_text_edit.setEnabled(False)
+            return
+        self.scene_text_edit.setEnabled(True)
+        self.scene_text_edit.setPlainText(scene["text"])
+
     def load_project(self, project_id: str, title: str, scenes: list) -> None:
         self.project_id = project_id
         self.project_label.setText(title)
-        self.scenes.clear()
-        if scenes:
-            timeline_scene_count = len(scenes)
-            for scene in scenes:
-                excerpt = scene.text if len(scene.text) <= 58 else scene.text[:55].rstrip() + "…"
-                self.scenes.addItem(f"{scene.index + 1:02d}  {excerpt}")
-        else:
+        persisted = self.store.list_scenes(project_id)
+        if not persisted and scenes:
+            self.store.replace_scenes(project_id, scenes)
+            persisted = self.store.list_scenes(project_id)
+        if not persisted:
             items = self.store.list_items(project_id)
             if items:
-                timeline_scene_count = len(items)
-                for index, item in enumerate(items):
-                    self.scenes.addItem(f"{index + 1:02d}  {item['original_filename']}")
+                for item in items:
+                    self.store.add_scene(project_id, item["original_filename"])
             else:
-                timeline_scene_count = 1
-                self.scenes.addItem("01  Blank scene")
-        self.scenes.setCurrentRow(0)
-        self._rebuild_timeline(timeline_scene_count)
+                self.store.add_scene(project_id, "Blank scene")
+        self._refresh_scenes(fallback_row=0)
         self._refresh_media()
+
+    def _add_scene(self) -> None:
+        if not self.project_id:
+            self.status_message.emit("Create or open a project before adding scenes")
+            return
+        scene_id = self.store.add_scene(self.project_id, "New scene")
+        self._refresh_scenes(selected_id=scene_id, fallback_row=self.scenes.count())
+        self.status_message.emit("Scene added")
+
+    def _duplicate_selected_scene(self) -> None:
+        if not self.project_id:
+            return
+        scene_id = self._selected_scene_id()
+        scene = self._scene_by_id(scene_id)
+        if scene is None:
+            return
+        duplicate_id = self.store.add_scene(
+            self.project_id,
+            f"{scene['text']} copy",
+            position=int(scene["position"]) + 1,
+            image_prompt=scene.get("image_prompt", ""),
+            voice_text=scene.get("voice_text", ""),
+            metadata=scene.get("metadata", {}),
+        )
+        self._refresh_scenes(selected_id=duplicate_id)
+        self.status_message.emit("Scene duplicated")
+
+    def _move_selected_scene(self, delta: int) -> None:
+        scene_id = self._selected_scene_id()
+        if not self.project_id or not scene_id:
+            return
+        current_row = self.scenes.currentRow()
+        target_row = current_row + int(delta)
+        if target_row < 0 or target_row >= self.scenes.count():
+            return
+        self.store.move_scene(scene_id, target_row)
+        self._refresh_scenes(selected_id=scene_id)
+        self.status_message.emit("Scene order updated")
+
+    def _delete_selected_scene(self) -> None:
+        if not self.project_id:
+            return
+        scene_id = self._selected_scene_id()
+        if not scene_id:
+            return
+        current_row = self.scenes.currentRow()
+        self.store.delete_scene(scene_id)
+        rows = self.store.list_scenes(self.project_id)
+        if not rows:
+            replacement_id = self.store.add_scene(self.project_id, "Blank scene")
+            self._refresh_scenes(selected_id=replacement_id)
+        else:
+            self._refresh_scenes(fallback_row=min(current_row, len(rows) - 1))
+        self.status_message.emit("Scene deleted")
+
+    def _save_selected_scene(self) -> None:
+        scene_id = self._selected_scene_id()
+        if not scene_id:
+            return
+        text = self.scene_text_edit.toPlainText().strip()
+        if not text:
+            self.status_message.emit("Scene text cannot be empty")
+            return
+        self.store.update_scene(scene_id, text=text, voice_text=text)
+        current_row = self.scenes.currentRow()
+        self._refresh_scenes(selected_id=scene_id, fallback_row=current_row)
+        self.status_message.emit("Scene saved")
 
     def _refresh_media(self) -> None:
         self.media_list.clear()
@@ -434,7 +585,6 @@ class StudioPage(QWidget):
         self.export_button.setText("Export video")
         self.status_message.emit(f"Export failed · {message}")
         self._export_worker = None
-
 
 
 class LibraryPage(QWidget):
