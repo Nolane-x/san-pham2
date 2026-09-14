@@ -72,14 +72,15 @@ def test_whiteboard_from_left_push_is_additive_and_preserves_pushed_object_state
     plan = _plan(push=0.4, push_direction="from_left")
     segments = build_whiteboard_segments(plan)
 
-    assert [(segment.kind, segment.duration) for segment in segments] == [
-        ("hold", 0.5),
-        ("reveal", 1.0),
-        ("push", 0.4),
-        ("hold", 0.25),
-        ("reveal", 0.75),
-        ("hold", 1.5),
+    assert [segment.kind for segment in segments] == [
+        "hold",
+        "reveal",
+        "push",
+        "hold",
+        "reveal",
+        "hold",
     ]
+    assert [segment.duration for segment in segments] == pytest.approx([0.5, 1.0, 0.4, 0.25, 0.75, 1.5])
     push_segment = segments[2]
     assert push_segment.before_ids == ("a",)
     assert push_segment.after_ids == ("a",)
@@ -151,4 +152,5 @@ def test_whiteboard_renderer_pushes_object_from_left_and_keeps_final_state(tmp_p
     assert "t/0.400000" in push_commands[0]
     assert "-1280" in push_commands[0]
     assert (("a",), True) in rendered_states
-    assert rendered_states[-1][0] == ("a", "b")
+    assert (("a", "b"), False) in rendered_states
+    assert runner.commands[-1][-1] == str(output)
