@@ -253,12 +253,12 @@ def build_image_filter_graph(
     if profile.style == "whiteboard":
         return (
             f"color=c=white:s={width}x{height}:r={fps}:d={total:.6f}[white];"
-            f"[0:v]{base},trim=duration={total:.6f},setpts=PTS-STARTPTS[image];"
+            f"[0:v]{base},trim=duration={total:.6f},setpts=PTS-STARTPTS,fps={fps}[image];"
             f"[white][image]xfade=transition=wipeleft:duration={reveal:.6f}:offset=0[outv]"
         )
 
     return (
-        f"[0:v]{base},trim=duration={total:.6f},setpts=PTS-STARTPTS,split=2[gray_src][color_src];"
+        f"[0:v]{base},trim=duration={total:.6f},setpts=PTS-STARTPTS,fps={fps},split=2[gray_src][color_src];"
         f"[gray_src]hue=s=0[gray];"
         f"[gray][color_src]xfade=transition=wipeleft:duration={reveal:.6f}:offset=0[outv]"
     )
