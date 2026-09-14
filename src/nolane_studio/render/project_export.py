@@ -45,6 +45,26 @@ def validate_supported_scene_render_state(plan: SceneRenderPlan) -> None:
                 f"scene {plan.scene_id} uses unsupported persisted render state: {field}"
             )
 
+    if plan.render_config.get("custom_object_push_config"):
+        raise UnsupportedSceneRenderState(
+            f"scene {plan.scene_id} uses unsupported persisted render state: custom_object_push_config"
+        )
+
+    push_mode = str(
+        plan.render_config.get("large_object_push_mode", "automatic") or "automatic"
+    ).strip().lower().replace("-", "_")
+    if push_mode != "automatic":
+        raise UnsupportedSceneRenderState(
+            f"scene {plan.scene_id} uses unsupported persisted render state: large_object_push_mode"
+        )
+
+    if bool(plan.render_config.get("large_object_push_enabled", False)) and not any(
+        entry.push > 0 for entry in plan.object_timing
+    ):
+        raise UnsupportedSceneRenderState(
+            f"scene {plan.scene_id} uses unsupported persisted render state: large_object_push_enabled"
+        )
+
 
 def validate_project_scene_media(plans: Sequence[SceneRenderPlan]) -> None:
     """Preflight every visible image/video source before any scene render starts."""
