@@ -120,11 +120,13 @@ class CanvasPreview(QWidget):
         p.drawRoundedRect(QRectF(x + w * 0.60, y + h * 0.18, w * 0.25, h * 0.45), 12, 12)
         p.setBrush(accent)
         p.drawEllipse(QRectF(x + w * 0.68, y + h * 0.28, w * 0.09, w * 0.09))
+
         p.setPen(QPen(accent, max(2.0, w / 260), Qt.PenStyle.DashLine))
-        p.drawCubicBezier(
-            QPointF(x + w * 0.15, y + h * 0.72),
+        motion_path = QPainterPath(QPointF(x + w * 0.15, y + h * 0.72))
+        motion_path.cubicTo(
             QPointF(x + w * 0.42, y + h * 0.50),
             QPointF(x + w * 0.59, y + h * 0.87),
             QPointF(x + w * 0.80, y + h * 0.70),
         )
+        p.drawPath(motion_path)
         p.end()
