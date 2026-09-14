@@ -23,6 +23,10 @@ def _store(tmp_path):
     return store, scenes
 
 
+def _layer_ids(page):
+    return [str(page.layers.item(row).data(0x0100)) for row in range(page.layers.count())]
+
+
 def test_canvas_editor_renders_object_model_in_z_order():
     _qt_app()
     from nolane_studio.ui.widgets import CanvasEditor
@@ -91,7 +95,7 @@ def test_studio_loads_canvas_from_selected_scene_and_switches_scene(tmp_path):
     assert page.layers.item(0).text() == "Closing shape"
 
 
-def test_studio_object_actions_are_persisted_and_layer_order_tracks_z_order(tmp_path):
+def test_layer_panel_lists_front_to_back_and_move_buttons_match_visual_depth(tmp_path):
     _qt_app()
     from nolane_studio.ui.pages import StudioPage
 
@@ -102,13 +106,51 @@ def test_studio_object_actions_are_persisted_and_layer_order_tracks_z_order(tmp_
     page._add_text_object()
     page._add_shape_object()
     rows = store.list_visual_objects(scenes[0]["id"])
-    assert [row["kind"] for row in rows] == ["text", "shape"]
-    assert page.layers.count() == 2
+    back_id = rows[0]["id"]
+    front_id = rows[1]["id"]
 
+    # Storage/canvas remain back -> front (ascending z_index), while a layer
+    # panel follows editor convention and presents the frontmost layer first.
+    assert [row["kind"] for row in rows] == ["text", "shape"]
+    assert page.canvas.object_ids() == [back_id, front_id]
+    assert _layer_ids(page) == [front_id, back_id]
+
+    # Up/"Move layer forward" moves the selected back layer toward the front.
     page.layers.setCurrentRow(1)
-    selected = page.layers.currentItem().data(0x0100)
+    selected = str(page.layers.currentItem().data(0x0100))
+    assert selected == back_id
     page._move_selected_object(-1)
-    assert [row["id"] for row in store.list_visual_objects(scenes[0]["id"])] == [selected, rows[0]["id"]]
+
+    assert [row["id"] for row in store.list_visual_objects(scenes[0]["id"])] == [front_id, back_id]
+    assert page.canvas.object_ids() == [front_id, back_id]
+    assert _layer_ids(page) == [back_id, front_id]
+    assert str(page.layers.currentItem().data(0x0100)) == back_id
+
+    # Down/"Move layer backward" is the exact inverse.
+    page._move_selected_object(1)
+
+    assert [row["id"] for row in store.list_visual_objects(scenes[0]["id"])] == [back_id, front_id]
+    assert page.canvas.object_ids() == [back_id, front_id]
+    assert _layer_ids(page) == [front_id, back_id]
+    assert str(page.layers.currentItem().data(0x0100)) == back_id
+
+
+def test_studio_object_transform_and_delete_remain_persisted_after_layer_refresh(tmp_path):
+    _qt_app()
+    from nolane_studio.ui.pages import StudioPage
+
+    store, scenes = _store(tmp_path)
+    page = StudioPage(store)
+    page.load_project("p1", "Demo", [])
+
+    page._add_text_object()
+    page._add_shape_object()
+    rows = store.list_visual_objects(scenes[0]["id"])
+    selected = rows[0]["id"]
+
+    # The back object is the second row in the front-to-back panel.
+    page.layers.setCurrentRow(1)
+    assert str(page.layers.currentItem().data(0x0100)) == selected
 
     page._canvas_object_transform_changed(selected, 41.0, 52.0, 420.0, 240.0, 13.0)
     changed = next(row for row in store.list_visual_objects(scenes[0]["id"]) if row["id"] == selected)
