@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtWidgets import QWidget
 
 from ..render.project_export import ProjectSceneExporter
@@ -37,7 +37,51 @@ class ExportWorker(QThread):
 
 
 class StudioPage(_BaseStudioPage):
-    """Studio page whose export path is authoritative scene/canvas state."""
+    """Studio page whose export and layer UI preserve authoritative canvas state."""
+
+    def _refresh_canvas_objects(self, *, selected_object_id: str | None = None) -> None:
+        scene_id = self._selected_scene_id()
+        rows = self.store.list_visual_objects(scene_id) if scene_id else []
+
+        # Storage and CanvasEditor use ascending z_index (back -> front). The
+        # layer panel follows the conventional editor stack: frontmost first.
+        self.canvas.set_objects(rows)
+        panel_rows = list(reversed(rows))
+
+        self.layers.blockSignals(True)
+        self.layers.clear()
+        selected_row = -1
+        for row_index, obj in enumerate(panel_rows):
+            z_index = int(obj.get("z_index", len(rows) - row_index - 1))
+            label = obj.get("name") or f"{str(obj.get('kind', 'object')).title()} {z_index + 1}"
+            self.layers.addItem(str(label))
+            item = self.layers.item(row_index)
+            item.setData(Qt.ItemDataRole.UserRole, obj["id"])
+            if selected_object_id and obj["id"] == selected_object_id:
+                selected_row = row_index
+        if panel_rows:
+            self.layers.setCurrentRow(selected_row if selected_row >= 0 else 0)
+        self.layers.blockSignals(False)
+        if panel_rows:
+            self.canvas.select_object(self._selected_object_id())
+
+    def _move_selected_object(self, delta: int) -> None:
+        object_id = self._selected_object_id()
+        if not object_id:
+            return
+
+        current_row = self.layers.currentRow()
+        target_row = current_row + int(delta)
+        count = self.layers.count()
+        if target_row < 0 or target_row >= count:
+            return
+
+        # Panel rows are front -> back, whereas persisted z_index is back ->
+        # front. Convert the target row instead of treating row == z_index.
+        target_z_index = (count - 1) - target_row
+        self.store.move_visual_object(object_id, target_z_index)
+        self._refresh_canvas_objects(selected_object_id=object_id)
+        self.status_message.emit("Layer order updated")
 
     def _export_media(self) -> None:
         if not self.project_id:
