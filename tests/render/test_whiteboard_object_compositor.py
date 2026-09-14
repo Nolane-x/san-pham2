@@ -24,7 +24,12 @@ class FakeRunner:
         output.touch()
 
 
-def _plan(*, push: float = 0.0, push_direction: str | None = None) -> SceneRenderPlan:
+def _plan(
+    *,
+    push: float = 0.0,
+    push_direction: str | None = None,
+    camera: str = "static",
+) -> SceneRenderPlan:
     objects = (
         {"id": "a", "kind": "shape", "visible": True, "z_index": 0, "payload": {"fill": "#FF0000"}},
         {"id": "b", "kind": "text", "visible": True, "z_index": 1, "payload": {"text": "B"}},
@@ -42,7 +47,12 @@ def _plan(*, push: float = 0.0, push_direction: str | None = None) -> SceneRende
         position=0,
         text="Whiteboard",
         objects=objects,
-        profile=RenderProfile(style="whiteboard", reveal_duration=1.75, hold_duration=1.5),
+        profile=RenderProfile(
+            style="whiteboard",
+            camera=camera,
+            reveal_duration=1.75,
+            hold_duration=1.5,
+        ),
         object_timing=timing,
         total_duration=total,
         media_sources=(),
@@ -154,3 +164,34 @@ def test_whiteboard_renderer_pushes_object_from_left_and_keeps_final_state(tmp_p
     assert (("a",), True) in rendered_states
     assert (("a", "b"), False) in rendered_states
     assert runner.commands[-1][-1] == str(output)
+
+
+def test_whiteboard_camera_motion_runs_after_scene_timeline_and_preserves_audio(tmp_path):
+    plan = _plan(camera="slow_zoom")
+
+    def layer_renderer(actual_plan, output, *, objects, transparent, width, height):
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    runner = FakeRunner()
+    compositor = WhiteboardSceneCompositor(
+        ffmpeg="ffmpeg",
+        runner=runner,
+        layer_renderer=layer_renderer,
+    )
+    output = tmp_path / "whiteboard-camera.mp4"
+
+    result = compositor.render(plan, output, width=1280, height=720, fps=24)
+
+    assert result == output
+    joined = [" ".join(command) for command in runner.commands]
+    concat_commands = [command for command in joined if " -f concat " in f" {command} "]
+    camera_commands = [command for command in joined if "zoompan=" in command]
+    assert len(concat_commands) == 1
+    assert len(camera_commands) == 1
+    assert concat_commands[0].endswith("whiteboard-camera-pre-camera.mp4")
+    assert "-map 0:v:0" in camera_commands[0]
+    assert "-map 0:a:0?" in camera_commands[0]
+    assert "-c:a copy" in camera_commands[0]
+    assert camera_commands[0].endswith(str(output))
