@@ -1,7 +1,15 @@
+import importlib.util
 from pathlib import Path
 
 
-def test_windows_capture_does_not_force_offscreen_platform():
-    source = Path("packaging/capture_ui.py").read_text(encoding="utf-8")
-    assert 'if os.name != "nt"' in source
-    assert 'os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")' in source
+MODULE = Path(__file__).parents[2] / "packaging" / "capture_ui.py"
+spec = importlib.util.spec_from_file_location("nolane_capture_policy", MODULE)
+capture_ui = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(capture_ui)
+
+
+def test_windows_capture_does_not_override_native_platform():
+    env = {"QT_QPA_PLATFORM": "windows"}
+    capture_ui.configure_capture_environment(env, "Windows")
+    assert env["QT_QPA_PLATFORM"] == "windows"
