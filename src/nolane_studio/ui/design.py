@@ -55,9 +55,11 @@ def workspace_spec() -> dict[str, str]:
 
 def qss(tokens: ThemeTokens | None = None) -> str:
     t = tokens or ThemeTokens()
+    # Deliberately leave font-family to the native Qt platform theme. This
+    # keeps Segoe UI on normal Windows desktops and avoids LastResort/tofu
+    # glyphs on Windows Server/headless capture environments.
     return f"""
     * {{
-        font-family: "Segoe UI", "Inter", sans-serif;
         outline: 0;
     }}
     QMainWindow, QWidget#appRoot {{
