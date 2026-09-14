@@ -30,7 +30,7 @@ from ..config import ProviderSettings, SettingsStore
 from ..render.exporter import ExportClip, MediaExporter
 from ..storage.store import ProjectStore
 from .design import PRODUCT_TAGLINE, ThemeTokens
-from .widgets import CanvasPreview, Dot, SectionTitle, Surface
+from .widgets import CanvasEditor, Dot, SectionTitle, Surface
 
 
 def _heading(eyebrow: str, title: str, subtitle: str) -> QWidget:
@@ -268,6 +268,7 @@ class StudioPage(QWidget):
         scenes_layout.addLayout(media_header)
         self.media_list = QListWidget()
         self.media_list.setMaximumHeight(138)
+        self.media_list.itemDoubleClicked.connect(self._add_media_to_canvas)
         scenes_layout.addWidget(self.media_list)
 
         canvas_shell = QFrame()
@@ -284,7 +285,9 @@ class StudioPage(QWidget):
         canvas_surface = Surface(raised=True)
         canvas_surface_layout = QVBoxLayout(canvas_surface)
         canvas_surface_layout.setContentsMargins(8, 8, 8, 8)
-        self.canvas = CanvasPreview()
+        self.canvas = CanvasEditor()
+        self.canvas.object_selected.connect(self._select_object_from_canvas)
+        self.canvas.object_transform_changed.connect(self._canvas_object_transform_changed)
         canvas_surface_layout.addWidget(self.canvas, 1)
         canvas_layout.addWidget(canvas_surface, 1)
 
@@ -293,8 +296,44 @@ class StudioPage(QWidget):
         inspector.setMaximumWidth(330)
         inspector_layout = QVBoxLayout(inspector)
         inspector_layout.setContentsMargins(16, 14, 16, 14)
-        inspector_layout.setSpacing(12)
+        inspector_layout.setSpacing(10)
         inspector_layout.addWidget(SectionTitle("Selected scene", "Inspector"))
+
+        layer_head = QHBoxLayout()
+        layer_title = QLabel("Layers")
+        layer_title.setObjectName("sectionTitle")
+        layer_head.addWidget(layer_title)
+        layer_head.addStretch(1)
+        add_text = QPushButton("+ Text")
+        add_text.setObjectName("ghost")
+        add_text.clicked.connect(self._add_text_object)
+        add_shape = QPushButton("+ Shape")
+        add_shape.setObjectName("ghost")
+        add_shape.clicked.connect(self._add_shape_object)
+        layer_head.addWidget(add_text)
+        layer_head.addWidget(add_shape)
+        inspector_layout.addLayout(layer_head)
+        self.layers = QListWidget()
+        self.layers.setMaximumHeight(150)
+        self.layers.currentItemChanged.connect(self._layer_selection_changed)
+        inspector_layout.addWidget(self.layers)
+        layer_actions = QHBoxLayout()
+        layer_up = QPushButton("↑")
+        layer_up.setObjectName("ghost")
+        layer_up.setToolTip("Move layer forward")
+        layer_up.clicked.connect(lambda: self._move_selected_object(-1))
+        layer_down = QPushButton("↓")
+        layer_down.setObjectName("ghost")
+        layer_down.setToolTip("Move layer backward")
+        layer_down.clicked.connect(lambda: self._move_selected_object(1))
+        delete_layer = QPushButton("Delete layer")
+        delete_layer.setObjectName("ghost")
+        delete_layer.clicked.connect(self._delete_selected_object)
+        layer_actions.addWidget(layer_up)
+        layer_actions.addWidget(layer_down)
+        layer_actions.addWidget(delete_layer, 1)
+        inspector_layout.addLayout(layer_actions)
+
         tabs = QComboBox()
         tabs.addItems(["Drawing", "Motion", "Voice", "Timing"])
         inspector_layout.addWidget(tabs)
@@ -389,6 +428,13 @@ class StudioPage(QWidget):
             return None
         return next((scene for scene in self.store.list_scenes(self.project_id) if scene["id"] == scene_id), None)
 
+    def _selected_object_id(self) -> str | None:
+        item = self.layers.currentItem()
+        if item is None:
+            return None
+        value = item.data(Qt.ItemDataRole.UserRole)
+        return str(value) if value else None
+
     def _refresh_scenes(self, *, selected_id: str | None = None, fallback_row: int = 0) -> None:
         if not self.project_id:
             return
@@ -416,14 +462,53 @@ class StudioPage(QWidget):
         if current is None:
             self.scene_text_edit.clear()
             self.scene_text_edit.setEnabled(False)
+            self._refresh_canvas_objects()
             return
         scene = self._scene_by_id(current.data(Qt.ItemDataRole.UserRole))
         if scene is None:
             self.scene_text_edit.clear()
             self.scene_text_edit.setEnabled(False)
+            self._refresh_canvas_objects()
             return
         self.scene_text_edit.setEnabled(True)
         self.scene_text_edit.setPlainText(scene["text"])
+        self._refresh_canvas_objects()
+
+    def _refresh_canvas_objects(self, *, selected_object_id: str | None = None) -> None:
+        scene_id = self._selected_scene_id()
+        rows = self.store.list_visual_objects(scene_id) if scene_id else []
+        self.canvas.set_objects(rows)
+        self.layers.blockSignals(True)
+        self.layers.clear()
+        selected_row = -1
+        for row_index, obj in enumerate(rows):
+            label = obj.get("name") or f"{str(obj.get('kind', 'object')).title()} {row_index + 1}"
+            self.layers.addItem(str(label))
+            item = self.layers.item(row_index)
+            item.setData(Qt.ItemDataRole.UserRole, obj["id"])
+            if selected_object_id and obj["id"] == selected_object_id:
+                selected_row = row_index
+        if rows:
+            self.layers.setCurrentRow(selected_row if selected_row >= 0 else 0)
+        self.layers.blockSignals(False)
+        if rows:
+            self.canvas.select_object(self._selected_object_id())
+
+    def _layer_selection_changed(self, current, previous) -> None:
+        del previous
+        if current is None:
+            self.canvas.select_object(None)
+            return
+        value = current.data(Qt.ItemDataRole.UserRole)
+        self.canvas.select_object(str(value) if value else None)
+
+    def _select_object_from_canvas(self, object_id: str) -> None:
+        for row in range(self.layers.count()):
+            item = self.layers.item(row)
+            if str(item.data(Qt.ItemDataRole.UserRole) or "") == object_id:
+                if self.layers.currentRow() != row:
+                    self.layers.setCurrentRow(row)
+                return
 
     def load_project(self, project_id: str, title: str, scenes: list) -> None:
         self.project_id = project_id
@@ -465,6 +550,22 @@ class StudioPage(QWidget):
             voice_text=scene.get("voice_text", ""),
             metadata=scene.get("metadata", {}),
         )
+        for obj in self.store.list_visual_objects(scene_id):
+            self.store.add_visual_object(
+                duplicate_id,
+                obj["kind"],
+                name=obj.get("name", ""),
+                source=obj.get("source", ""),
+                x=obj.get("x", 0),
+                y=obj.get("y", 0),
+                width=obj.get("width", 320),
+                height=obj.get("height", 180),
+                rotation=obj.get("rotation", 0),
+                opacity=obj.get("opacity", 1),
+                visible=obj.get("visible", True),
+                locked=obj.get("locked", False),
+                payload=obj.get("payload", {}),
+            )
         self._refresh_scenes(selected_id=duplicate_id)
         self.status_message.emit("Scene duplicated")
 
@@ -509,6 +610,81 @@ class StudioPage(QWidget):
         self._refresh_scenes(selected_id=scene_id, fallback_row=current_row)
         self.status_message.emit("Scene saved")
 
+    def _add_text_object(self) -> None:
+        scene_id = self._selected_scene_id()
+        if not scene_id:
+            self.status_message.emit("Select a scene before adding an object")
+            return
+        object_id = self.store.add_visual_object(
+            scene_id,
+            "text",
+            name=f"Text {len(self.store.list_visual_objects(scene_id)) + 1}",
+            x=160,
+            y=120,
+            width=600,
+            height=110,
+            payload={"text": "Text", "font_size": 42, "color": "#20232A"},
+        )
+        self._refresh_canvas_objects(selected_object_id=object_id)
+        self.status_message.emit("Text layer added")
+
+    def _add_shape_object(self) -> None:
+        scene_id = self._selected_scene_id()
+        if not scene_id:
+            self.status_message.emit("Select a scene before adding an object")
+            return
+        object_id = self.store.add_visual_object(
+            scene_id,
+            "shape",
+            name=f"Shape {len(self.store.list_visual_objects(scene_id)) + 1}",
+            x=240,
+            y=180,
+            width=420,
+            height=240,
+            payload={"shape": "rect", "fill": "#DDD9CD"},
+        )
+        self._refresh_canvas_objects(selected_object_id=object_id)
+        self.status_message.emit("Shape layer added")
+
+    def _move_selected_object(self, delta: int) -> None:
+        object_id = self._selected_object_id()
+        if not object_id:
+            return
+        current_row = self.layers.currentRow()
+        target = current_row + int(delta)
+        if target < 0 or target >= self.layers.count():
+            return
+        self.store.move_visual_object(object_id, target)
+        self._refresh_canvas_objects(selected_object_id=object_id)
+        self.status_message.emit("Layer order updated")
+
+    def _delete_selected_object(self) -> None:
+        object_id = self._selected_object_id()
+        if not object_id:
+            return
+        self.store.delete_visual_object(object_id)
+        self._refresh_canvas_objects()
+        self.status_message.emit("Layer deleted")
+
+    def _canvas_object_transform_changed(
+        self,
+        object_id: str,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        rotation: float,
+    ) -> None:
+        self.store.update_visual_object(
+            object_id,
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            rotation=rotation,
+        )
+        self.status_message.emit("Object transform saved")
+
     def _refresh_media(self) -> None:
         self.media_list.clear()
         if not self.project_id:
@@ -518,9 +694,34 @@ class StudioPage(QWidget):
         if not media:
             self.media_list.addItem("Drop in images or video")
             return
-        for item in media:
+        for index, item in enumerate(media):
             icon = "IMG" if item["kind"] == "image" else ("VID" if item["kind"] == "video" else "AUD")
             self.media_list.addItem(f"{icon}   {item['original_name']}")
+            self.media_list.item(index).setData(Qt.ItemDataRole.UserRole, item["id"])
+
+    def _add_media_to_canvas(self, list_item) -> None:
+        scene_id = self._selected_scene_id()
+        if not self.project_id or not scene_id or list_item is None:
+            return
+        media_id = str(list_item.data(Qt.ItemDataRole.UserRole) or "")
+        if not media_id:
+            return
+        media = next((row for row in self.store.list_media(self.project_id) if row["id"] == media_id), None)
+        if media is None or media["kind"] not in {"image", "video"}:
+            return
+        object_id = self.store.add_visual_object(
+            scene_id,
+            media["kind"],
+            name=media["original_name"],
+            source=media["file_path"],
+            x=160,
+            y=90,
+            width=640,
+            height=360,
+            payload={"media_id": media_id, "fit": "contain"},
+        )
+        self._refresh_canvas_objects(selected_object_id=object_id)
+        self.status_message.emit("Media added to canvas")
 
     def _import_media(self) -> None:
         if not self.project_id:
