@@ -79,6 +79,21 @@ CREATE TABLE IF NOT EXISTS visual_editor_media (
     FOREIGN KEY(project_id) REFERENCES batch_projects(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS visual_editor_scenes (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    position INTEGER NOT NULL CHECK(position >= 0),
+    text TEXT NOT NULL,
+    image_prompt TEXT NOT NULL DEFAULT '',
+    voice_text TEXT NOT NULL DEFAULT '',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    reveal_duration REAL NOT NULL DEFAULT 8.0,
+    hold_duration REAL NOT NULL DEFAULT 1.0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(project_id) REFERENCES batch_projects(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS visual_editor_timeline_state (
     project_id TEXT PRIMARY KEY,
     user_google_id TEXT NOT NULL DEFAULT 'local',
@@ -107,6 +122,7 @@ CREATE TABLE IF NOT EXISTS user_project_library (
 CREATE INDEX IF NOT EXISTS idx_batch_items_project ON batch_items(project_id, image_index);
 CREATE INDEX IF NOT EXISTS idx_batch_videos_project ON batch_videos(project_id);
 CREATE INDEX IF NOT EXISTS idx_batch_items_source_media ON batch_items(project_id, source_media_id);
+CREATE INDEX IF NOT EXISTS idx_visual_scenes_project ON visual_editor_scenes(project_id, position);
 CREATE INDEX IF NOT EXISTS idx_visual_timeline_user ON visual_editor_timeline_state(user_google_id);
 CREATE INDEX IF NOT EXISTS idx_user_project_library_user ON user_project_library(user_google_id, archived, updated_at);
 '''
