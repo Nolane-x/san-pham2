@@ -27,8 +27,8 @@ class WhiteboardSegment:
 
     def __post_init__(self) -> None:
         kind = str(self.kind).strip().lower()
-        if kind not in {"hold", "reveal", "push"}:
-            raise ValueError("whiteboard segment kind must be hold, reveal, or push")
+        if kind not in {"hold", "reveal", "push", "outro"}:
+            raise ValueError("whiteboard segment kind must be hold, reveal, push, or outro")
         duration = float(self.duration)
         if duration <= 0:
             raise ValueError("whiteboard segment duration must be > 0")
@@ -36,6 +36,8 @@ class WhiteboardSegment:
         direction = None if self.direction is None else str(self.direction).strip().lower().replace("-", "_")
         if kind == "push" and (not object_id or not direction):
             raise ValueError("push segment requires object_id and direction")
+        if kind == "outro" and not direction:
+            raise ValueError("outro segment requires direction")
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "duration", duration)
         object.__setattr__(self, "object_id", object_id)
@@ -55,14 +57,35 @@ def _push_direction(plan: SceneRenderPlan) -> str:
     return direction
 
 
+def _outro_direction(plan: SceneRenderPlan) -> str:
+    value = plan.render_config.get("outro_direction", "left")
+    direction = str(value or "left").strip().lower().replace("-", "_")
+    # ``left`` is the recovered/default exit direction. Other directions stay
+    # fail-closed until their native behavior is evidenced strongly enough.
+    if direction != "left":
+        raise UnsupportedWhiteboardMotion(f"unsupported whiteboard outro direction: {direction}")
+    return direction
+
+
+def _outro_duration(plan: SceneRenderPlan) -> float:
+    if not bool(plan.render_config.get("outro_enabled", False)):
+        return 0.0
+    try:
+        return max(0.0, float(plan.render_config.get("outro_duration", 0.0)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def build_whiteboard_segments(plan: SceneRenderPlan) -> list[WhiteboardSegment]:
     """Translate recovered per-object timing into an additive whiteboard timeline.
 
     Pause and draw phases remain exact additive phases. The recovered default
     object-push direction (``from_left``) is represented as a dedicated motion
     phase after the object's reveal and before the next object's timing begins.
-    Directions whose original native-engine behavior has not been recovered
-    strongly enough still fail closed rather than being approximated.
+    A configured recovered outro remains a distinct additive exit phase after
+    the final hold instead of being flattened into static time. Directions whose
+    original native-engine behavior has not been recovered strongly enough fail
+    closed rather than being approximated.
     """
     if plan.profile.style != "whiteboard":
         raise ValueError("whiteboard segments require a whiteboard render profile")
@@ -117,9 +140,24 @@ def build_whiteboard_segments(plan: SceneRenderPlan) -> list[WhiteboardSegment]:
     remaining = float(plan.total_duration) - cursor
     if remaining < -epsilon:
         raise CompositionError("whiteboard object timing exceeds scene duration")
-    if remaining > epsilon:
-        final_state = tuple(revealed)
-        segments.append(WhiteboardSegment("hold", remaining, final_state, final_state))
+
+    final_state = tuple(revealed)
+    outro = _outro_duration(plan)
+    if outro > remaining + epsilon:
+        raise CompositionError("whiteboard outro duration exceeds remaining scene duration")
+    hold_remaining = max(0.0, remaining - outro)
+    if hold_remaining > epsilon:
+        segments.append(WhiteboardSegment("hold", hold_remaining, final_state, final_state))
+    if outro > epsilon:
+        segments.append(
+            WhiteboardSegment(
+                "outro",
+                outro,
+                final_state,
+                final_state,
+                direction=_outro_direction(plan),
+            )
+        )
     if not segments:
         raise CompositionError("whiteboard scene has no positive-duration phases")
     return segments
@@ -273,6 +311,96 @@ def build_object_push_command(
         f"{duration:.6f}",
         "-i",
         object_layer,
+        "-f",
+        "lavfi",
+        "-t",
+        f"{duration:.6f}",
+        "-i",
+        "anullsrc=channel_layout=stereo:sample_rate=48000",
+        "-filter_complex",
+        graph,
+        "-map",
+        "[outv]",
+        "-map",
+        "2:a:0",
+        "-t",
+        f"{duration:.6f}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-threads",
+        "1",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-profile:v",
+        "high",
+        "-level",
+        "4.1",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "160k",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-movflags",
+        "+faststart",
+        output,
+    ]
+
+
+def build_scene_outro_command(
+    ffmpeg: str,
+    source: str,
+    output: str,
+    *,
+    duration: float,
+    direction: str,
+    width: int = 1280,
+    height: int = 720,
+    fps: int = 24,
+) -> list[str]:
+    """Move the fully revealed whiteboard canvas out in the recovered left outro."""
+    duration = float(duration)
+    if duration <= 0:
+        raise ValueError("outro duration must be > 0")
+    direction = str(direction).strip().lower().replace("-", "_")
+    if direction != "left":
+        raise UnsupportedWhiteboardMotion(f"unsupported whiteboard outro direction: {direction}")
+
+    width = max(2, int(width))
+    height = max(2, int(height))
+    if width % 2:
+        width -= 1
+    if height % 2:
+        height -= 1
+    fps = max(1, int(fps))
+    normalization = _normalize(width, height, fps)
+    x_expression = f"-{width}*min(t/{duration:.6f},1)"
+    graph = (
+        f"[0:v]{normalization},format=rgba,trim=duration={duration:.6f},setpts=PTS-STARTPTS[scene];"
+        f"[1:v]format=rgba,trim=duration={duration:.6f},setpts=PTS-STARTPTS[background];"
+        f"[background][scene]overlay=x='{x_expression}':y=0:eval=frame:shortest=1[outv]"
+    )
+    return [
+        ffmpeg,
+        "-y",
+        "-loop",
+        "1",
+        "-t",
+        f"{duration:.6f}",
+        "-i",
+        source,
+        "-f",
+        "lavfi",
+        "-t",
+        f"{duration:.6f}",
+        "-i",
+        f"color=c=white:s={width}x{height}:r={fps}",
         "-f",
         "lavfi",
         "-t",
@@ -479,7 +607,7 @@ class WhiteboardSceneCompositor:
                         height=height,
                         fps=fps,
                     )
-                else:
+                elif segment.kind == "push":
                     assert segment.object_id is not None and segment.direction is not None
                     base_ids = tuple(object_id for object_id in segment.after_ids if object_id != segment.object_id)
                     base = ensure_state(base_ids)
@@ -488,6 +616,18 @@ class WhiteboardSceneCompositor:
                         self.ffmpeg,
                         str(base),
                         str(object_layer),
+                        str(target),
+                        duration=segment.duration,
+                        direction=segment.direction,
+                        width=width,
+                        height=height,
+                        fps=fps,
+                    )
+                else:
+                    assert segment.direction is not None
+                    command = build_scene_outro_command(
+                        self.ffmpeg,
+                        str(after),
                         str(target),
                         duration=segment.duration,
                         direction=segment.direction,
