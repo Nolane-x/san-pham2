@@ -20,6 +20,28 @@ class UnsupportedProjectTimeline(ValueError):
     """Raised when persisted editor timeline state cannot be exported faithfully."""
 
 
+class UnsupportedSceneRenderState(ValueError):
+    """Raised when persisted scene behavior has no faithful renderer yet."""
+
+
+_UNSUPPORTED_RENDER_STATE_FIELDS = (
+    "remove_background_enabled",
+    "auto_object_fx_enabled",
+    "custom_object_effect_config",
+    "custom_object_sound_config",
+    "custom_draw_points",
+)
+
+
+def validate_supported_scene_render_state(plan: SceneRenderPlan) -> None:
+    """Reject persisted behavior that the current renderers would silently drop."""
+    for field in _UNSUPPORTED_RENDER_STATE_FIELDS:
+        if plan.render_config.get(field):
+            raise UnsupportedSceneRenderState(
+                f"scene {plan.scene_id} uses unsupported persisted render state: {field}"
+            )
+
+
 class ProjectExportStore(ScenePlanStore, Protocol):
     def load_timeline(self, project_id: str) -> dict[str, Any]: ...
 
@@ -90,10 +112,12 @@ class ProjectSceneExporter:
     recovered object-timed compositor; mixed whiteboard/source-video scenes
     with additional visible layers fail closed until their native timing and
     composition behavior is recovered; static/color-reveal scenes use a
-    lossless snapshot plus the existing image profile. Temporary scene media
-    remains alive for the whole synchronous MediaExporter call. Persisted
-    timeline state is consumed only where recovered semantics are unambiguous;
-    unsupported track payloads fail closed instead of being silently dropped.
+    lossless snapshot plus the existing image profile. Persisted scene options
+    that currently have no faithful renderer also fail closed instead of being
+    silently discarded. Temporary scene media remains alive for the whole
+    synchronous MediaExporter call. Persisted timeline state is consumed only
+    where recovered semantics are unambiguous; unsupported track payloads fail
+    closed instead of being silently dropped.
     """
 
     def __init__(
@@ -131,6 +155,7 @@ class ProjectSceneExporter:
             temp = Path(temp_raw)
             clips: list[ExportClip] = []
             for index, plan in enumerate(plans):
+                validate_supported_scene_render_state(plan)
                 has_video = any(
                     str(obj.get("kind", "")).strip().lower() == "video"
                     and bool(obj.get("visible", True))
