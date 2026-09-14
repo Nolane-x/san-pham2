@@ -55,6 +55,12 @@ def _touch_whiteboard(plan, output, **kwargs):
     return Path(output)
 
 
+def _touch_source(tmp_path, name="clip.mp4"):
+    source = tmp_path / name
+    source.touch()
+    return str(source)
+
+
 def test_project_exporter_routes_whiteboard_before_snapshot_and_keeps_workspace_alive(tmp_path):
     store, first, second = _store(tmp_path)
     media = FakeMediaExporter()
@@ -192,7 +198,9 @@ def test_project_exporter_fails_closed_for_unrecovered_track_payloads(tmp_path, 
 
 def test_project_exporter_propagates_video_compositor_refusal(tmp_path):
     store, _first, second = _store(tmp_path)
-    store.add_visual_object(second["id"], "video", name="Video", source="clip.mp4")
+    store.add_visual_object(
+        second["id"], "video", name="Video", source=_touch_source(tmp_path, "refusal.mp4")
+    )
     media = FakeMediaExporter()
 
     def video_renderer(plan, output, **kwargs):
@@ -213,7 +221,9 @@ def test_project_exporter_propagates_video_compositor_refusal(tmp_path):
 
 def test_project_exporter_fails_closed_before_video_renderer_for_whiteboard_source_video(tmp_path):
     store, first, _second = _store(tmp_path)
-    store.add_visual_object(first["id"], "video", name="Video", source="clip.mp4")
+    store.add_visual_object(
+        first["id"], "video", name="Video", source=_touch_source(tmp_path, "whiteboard.mp4")
+    )
     media = FakeMediaExporter()
     video_calls = []
 
@@ -240,7 +250,9 @@ def test_project_exporter_fails_closed_before_video_renderer_for_whiteboard_sour
 
 def test_project_exporter_keeps_color_reveal_source_video_on_video_renderer(tmp_path):
     store, _first, second = _store(tmp_path)
-    store.add_visual_object(second["id"], "video", name="Video", source="clip.mp4")
+    store.add_visual_object(
+        second["id"], "video", name="Video", source=_touch_source(tmp_path, "color.mp4")
+    )
     media = FakeMediaExporter()
     video_calls = []
 
@@ -264,6 +276,54 @@ def test_project_exporter_keeps_color_reveal_source_video_on_video_renderer(tmp_
     clips = media.calls[0][0]
     assert [clip.clip_id for clip in clips] == [store.list_scenes("p1")[0]["id"], second["id"]]
     assert [clip.kind for clip in clips] == ["video", "video"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "suffix"),
+    [("image", ".png"), ("video", ".mp4")],
+    ids=["missing-image", "missing-video"],
+)
+def test_project_exporter_preflights_all_scene_media_before_render(tmp_path, kind, suffix):
+    error_type = getattr(project_export, "MissingSceneMedia", RuntimeError)
+    store, _first, second = _store(tmp_path)
+    missing = tmp_path / f"missing{suffix}"
+    object_id = store.add_visual_object(
+        second["id"], kind, name=f"Missing {kind}", source=str(missing)
+    )
+    media = FakeMediaExporter()
+    render_calls = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        return _touch_snapshot(plan, output)
+
+    def whiteboard(plan, output, **kwargs):
+        render_calls.append(("whiteboard", plan.scene_id))
+        return _touch_whiteboard(plan, output, **kwargs)
+
+    def video(plan, output, **kwargs):
+        render_calls.append(("video", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        video_renderer=video,
+        whiteboard_renderer=whiteboard,
+    )
+
+    with pytest.raises(error_type) as exc_info:
+        exporter.export("p1", tmp_path / "never.mp4")
+
+    message = str(exc_info.value)
+    assert second["id"] in message
+    assert object_id in message
+    assert str(missing) in message
+    assert render_calls == []
+    assert media.calls == []
 
 
 @pytest.mark.parametrize(
