@@ -51,6 +51,18 @@ jobs:
             --collect-all imageio_ffmpeg `
             launcher.py
 
+      - name: Smoke-test portable executable
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath ".\dist\NolaneStudio.exe" -ArgumentList "--smoke-test" -PassThru
+          if (-not $process.WaitForExit(20000)) {
+            $process.Kill()
+            throw "Portable NolaneStudio.exe smoke test timed out"
+          }
+          if ($process.ExitCode -ne 0) {
+            throw "Portable NolaneStudio.exe smoke test failed with exit code $($process.ExitCode)"
+          }
+
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --no-progress -y
@@ -60,6 +72,46 @@ jobs:
         run: |
           $version = python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])"
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" packaging\windows\NolaneStudio.iss
+
+      - name: Smoke-test silent installer and installed executable
+        shell: pwsh
+        run: |
+          $version = python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])"
+          $installDir = Join-Path $env:RUNNER_TEMP "NolaneStudioSmoke"
+          $setup = Resolve-Path "artifacts\NolaneStudio-Setup-$version.exe"
+          $installer = Start-Process -FilePath $setup -ArgumentList @(
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/SP-",
+            "/DIR=$installDir"
+          ) -PassThru -Wait
+          if ($installer.ExitCode -ne 0) {
+            throw "Silent installer failed with exit code $($installer.ExitCode)"
+          }
+          $installedExe = Join-Path $installDir "NolaneStudio.exe"
+          if (-not (Test-Path $installedExe)) {
+            throw "Installed executable was not created at $installedExe"
+          }
+          $process = Start-Process -FilePath $installedExe -ArgumentList "--smoke-test" -PassThru
+          if (-not $process.WaitForExit(20000)) {
+            $process.Kill()
+            throw "Installed NolaneStudio.exe smoke test timed out"
+          }
+          if ($process.ExitCode -ne 0) {
+            throw "Installed NolaneStudio.exe smoke test failed with exit code $($process.ExitCode)"
+          }
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          if (Test-Path $uninstaller) {
+            $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @(
+              "/VERYSILENT",
+              "/SUPPRESSMSGBOXES",
+              "/NORESTART"
+            ) -PassThru -Wait
+            if ($uninstall.ExitCode -ne 0) {
+              throw "Silent uninstaller failed with exit code $($uninstall.ExitCode)"
+            }
+          }
 
       - name: Package portable build and checksums
         shell: pwsh
@@ -75,7 +127,23 @@ jobs:
             $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
             "$hash  $([IO.Path]::GetFileName($file))"
           }
-          $lines | Set-Content -Encoding ascii "artifacts\SHA256SUMS.txt"
+          $manifestPath = "artifacts\SHA256SUMS.txt"
+          $lines | Set-Content -Encoding ascii $manifestPath
+
+          $manifest = @{}
+          foreach ($line in Get-Content $manifestPath) {
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)$') {
+              throw "Malformed checksum manifest line: $line"
+            }
+            $manifest[$Matches[2]] = $Matches[1]
+          }
+          foreach ($file in $files) {
+            $name = [IO.Path]::GetFileName($file)
+            $actual = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+            if (-not $manifest.ContainsKey($name) -or $manifest[$name] -ne $actual) {
+              throw "Checksum verification failed for $name"
+            }
+          }
 
       - name: Upload Windows verification artifacts
         uses: actions/upload-artifact@v4
