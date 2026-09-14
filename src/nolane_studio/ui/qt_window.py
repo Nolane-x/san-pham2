@@ -22,7 +22,7 @@ from .widgets import BrandMark, NavButton
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, store: ProjectStore, provider_descriptors, settings_store: SettingsStore) -> None:
+    def __init__(self, store: ProjectStore, providers, settings_store: SettingsStore) -> None:
         super().__init__()
         self.setWindowTitle(PRODUCT_NAME)
         self.resize(1440, 900)
@@ -70,16 +70,16 @@ class MainWindow(QMainWindow):
         new_btn.setObjectName("primary")
         new_btn.clicked.connect(lambda: self._navigate(0))
         side.addWidget(new_btn)
-        local = QLabel("LOCAL-FIRST  ·  v0.1")
+        local = QLabel("LOCAL-FIRST")
         local.setObjectName("brandMeta")
         local.setAlignment(Qt.AlignmentFlag.AlignCenter)
         side.addWidget(local)
 
         self.pages = QStackedWidget(root)
         self.create_page = CreatePage(store)
-        self.studio_page = StudioPage(store)
+        self.studio_page = StudioPage(store, providers=providers)
         self.library_page = LibraryPage(store)
-        self.providers_page = ProvidersPage(provider_descriptors, settings_store)
+        self.providers_page = ProvidersPage(providers.descriptors, settings_store)
         self.pages.addWidget(self.create_page)
         self.pages.addWidget(self.studio_page)
         self.pages.addWidget(self.library_page)
@@ -127,4 +127,4 @@ def create_window(*, db_path=None) -> MainWindow:
     store.initialize()
     settings_store = SettingsStore()
     services = build_services(settings_store.load())
-    return MainWindow(store, services.providers.descriptors, settings_store)
+    return MainWindow(store, services.providers, settings_store)
