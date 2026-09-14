@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Callable, Protocol, Sequence
+from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from .compositor import render_scene_snapshot
 from .exporter import ExportClip, MediaExporter
@@ -16,6 +16,14 @@ VideoRenderer = Callable[..., Path]
 WhiteboardRenderer = Callable[..., Path]
 
 
+class UnsupportedProjectTimeline(ValueError):
+    """Raised when persisted editor timeline state cannot be exported faithfully."""
+
+
+class ProjectExportStore(ScenePlanStore, Protocol):
+    def load_timeline(self, project_id: str) -> dict[str, Any]: ...
+
+
 class SceneMediaExporter(Protocol):
     def export(
         self,
@@ -25,6 +33,55 @@ class SceneMediaExporter(Protocol):
     ) -> Path: ...
 
 
+def apply_persisted_timeline_state(
+    clips: Sequence[ExportClip],
+    state: Mapping[str, Any] | None,
+) -> list[ExportClip]:
+    """Apply only timeline semantics recovered strongly enough for exact export.
+
+    The recovered store proves four persisted timeline buckets exist, but it
+    does not establish a trustworthy per-entry schema for ``clips``,
+    ``videoClips`` or ``audioClips``. Silently ignoring any of those payloads
+    would lose editor state, so this boundary fails closed until their shape is
+    recovered. ``mediaOrder`` is safe only when it is an exact permutation of
+    the already-rendered scene clip IDs.
+    """
+    ordered = list(clips)
+    raw = dict(state or {})
+
+    for field, empty in (
+        ("clips", {}),
+        ("videoClips", []),
+        ("audioClips", []),
+    ):
+        value = raw.get(field, empty)
+        if value:
+            raise UnsupportedProjectTimeline(
+                f"{field} timeline payload is not yet recovered strongly enough for faithful export"
+            )
+
+    media_order = raw.get("mediaOrder", [])
+    if not media_order:
+        return ordered
+    if not isinstance(media_order, list):
+        raise UnsupportedProjectTimeline("mediaOrder must be a list")
+
+    normalized_order = [str(item).strip() for item in media_order]
+    clip_ids = [clip.clip_id for clip in ordered]
+    if (
+        any(not item for item in normalized_order)
+        or len(normalized_order) != len(clip_ids)
+        or len(set(normalized_order)) != len(normalized_order)
+        or set(normalized_order) != set(clip_ids)
+    ):
+        raise UnsupportedProjectTimeline(
+            "mediaOrder must be an exact permutation of rendered scene clip ids"
+        )
+
+    clips_by_id = {clip.clip_id: clip for clip in ordered}
+    return [clips_by_id[clip_id] for clip_id in normalized_order]
+
+
 class ProjectSceneExporter:
     """Export persisted scene/canvas state instead of loose imported media.
 
@@ -32,12 +89,14 @@ class ProjectSceneExporter:
     video compositor first; ordinary whiteboard scenes use the recovered
     object-timed compositor; static/color-reveal scenes use a lossless snapshot
     plus the existing image profile. Temporary scene media remains alive for
-    the whole synchronous MediaExporter call.
+    the whole synchronous MediaExporter call. Persisted timeline state is
+    consumed only where recovered semantics are unambiguous; unsupported track
+    payloads fail closed instead of being silently dropped.
     """
 
     def __init__(
         self,
-        store: ScenePlanStore,
+        store: ProjectExportStore,
         *,
         media_exporter: SceneMediaExporter | None = None,
         snapshot_renderer: SnapshotRenderer = render_scene_snapshot,
@@ -138,6 +197,10 @@ class ProjectSceneExporter:
                     )
                 )
 
+            clips = apply_persisted_timeline_state(
+                clips,
+                self.store.load_timeline(project_id),
+            )
             return Path(
                 self.media_exporter.export(
                     clips,
