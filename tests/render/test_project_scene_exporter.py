@@ -266,6 +266,61 @@ def test_project_exporter_keeps_color_reveal_source_video_on_video_renderer(tmp_
     assert [clip.kind for clip in clips] == ["video", "video"]
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("remove_background_enabled", True),
+        ("auto_object_fx_enabled", True),
+        ("custom_object_effect_config", [{"effect": "legacy-effect"}]),
+        ("custom_object_sound_config", [{"sound": "legacy-sound"}]),
+        ("custom_draw_points", [[0.0, 0.0], [1.0, 1.0]]),
+    ],
+    ids=[
+        "remove-background",
+        "auto-object-fx",
+        "custom-object-effect",
+        "custom-object-sound",
+        "custom-draw-points",
+    ],
+)
+def test_project_exporter_fails_closed_before_render_for_unsupported_persisted_render_state(
+    tmp_path, field, value
+):
+    error_type = getattr(project_export, "UnsupportedSceneRenderState", RuntimeError)
+    store, first, _second = _store(tmp_path)
+    store.update_scene_render_settings(first["id"], settings={field: value})
+    media = FakeMediaExporter()
+    render_calls = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        return _touch_snapshot(plan, output)
+
+    def whiteboard(plan, output, **kwargs):
+        render_calls.append(("whiteboard", plan.scene_id))
+        return _touch_whiteboard(plan, output, **kwargs)
+
+    def video(plan, output, **kwargs):
+        render_calls.append(("video", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        video_renderer=video,
+        whiteboard_renderer=whiteboard,
+    )
+
+    with pytest.raises(error_type, match=field):
+        exporter.export("p1", tmp_path / "never.mp4")
+
+    assert render_calls == []
+    assert media.calls == []
+
+
 def test_project_exporter_rejects_project_without_scenes(tmp_path):
     store = ProjectStore(tmp_path / "empty.db")
     store.initialize()
