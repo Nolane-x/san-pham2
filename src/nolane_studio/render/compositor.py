@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Mapping
+
+from .scene_plan import SceneRenderPlan
+
+
+class CompositionError(RuntimeError):
+    """Raised when a persisted canvas cannot be represented faithfully."""
+
+
+class CompositionRequiresVideo(CompositionError):
+    """Raised when a scene needs the source-video compositor path."""
+
+
+def _float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _bounded_opacity(value: Any) -> float:
+    return max(0.0, min(1.0, _float(value, 1.0)))
+
+
+def render_scene_snapshot(
+    plan: SceneRenderPlan,
+    output_path: str | Path,
+    *,
+    width: int = 1280,
+    height: int = 720,
+    background: str = "#F5F3EC",
+) -> Path:
+    """Rasterize a persisted scene without dropping static canvas layers.
+
+    Text, shapes, images and freehand drawing use the same top-left transform
+    model as :class:`CanvasEditor`. A video layer cannot be represented by a
+    still snapshot, so it is rejected explicitly and routed to the later
+    source-video composition path instead of being silently omitted.
+    """
+    # Keep Qt out of core imports/startup; rendering loads it only on demand.
+    from PySide6.QtCore import QPointF, QRectF, Qt
+    from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
+
+    width = max(2, int(width))
+    height = max(2, int(height))
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    ordered = sorted(
+        (dict(obj) for obj in plan.objects if bool(obj.get("visible", True))),
+        key=lambda obj: (int(obj.get("z_index", 0)), str(obj.get("id", ""))),
+    )
+    video_ids = [str(obj.get("id", "")) for obj in ordered if str(obj.get("kind", "")).lower() == "video"]
+    if video_ids:
+        raise CompositionRequiresVideo(
+            f"scene {plan.scene_id} requires video composition for object(s): {', '.join(video_ids)}"
+        )
+
+    image = QImage(width, height, QImage.Format.Format_ARGB32)
+    if image.isNull():
+        raise CompositionError(f"unable to allocate {width}x{height} scene image")
+    image.fill(QColor(background))
+
+    painter = QPainter(image)
+    if not painter.isActive():
+        raise CompositionError("unable to create scene painter")
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+    try:
+        for obj in ordered:
+            kind = str(obj.get("kind", "")).strip().lower()
+            if kind not in {"shape", "text", "image", "drawing"}:
+                raise CompositionError(
+                    f"scene {plan.scene_id} contains unsupported visual object kind {kind!r}"
+                )
+
+            x = _float(obj.get("x"), 0.0)
+            y = _float(obj.get("y"), 0.0)
+            object_width = max(0.0, _float(obj.get("width"), 320.0))
+            object_height = max(0.0, _float(obj.get("height"), 180.0))
+            rotation = _float(obj.get("rotation"), 0.0)
+            payload: Mapping[str, Any] = obj.get("payload") if isinstance(obj.get("payload"), Mapping) else {}
+
+            painter.save()
+            try:
+                painter.setOpacity(_bounded_opacity(obj.get("opacity", 1.0)))
+                painter.translate(x, y)
+                painter.rotate(rotation)
+                rect = QRectF(0.0, 0.0, object_width, object_height)
+
+                if kind == "shape":
+                    painter.setPen(QPen(QColor("#687087"), 1.5))
+                    painter.setBrush(QColor(str(payload.get("fill", "#DDD9CD"))))
+                    painter.drawRoundedRect(rect, 8.0, 8.0)
+                    continue
+
+                if kind == "text":
+                    painter.setPen(QColor(str(payload.get("color", "#20232A"))))
+                    font = QFont()
+                    font.setPixelSize(max(8, int(_float(payload.get("font_size"), 36))))
+                    painter.setFont(font)
+                    painter.drawText(
+                        rect.adjusted(6.0, 4.0, -6.0, -4.0),
+                        int(Qt.TextFlag.TextWordWrap),
+                        str(payload.get("text", "Text")),
+                    )
+                    continue
+
+                if kind == "image":
+                    source = Path(str(obj.get("source") or ""))
+                    if not source.is_file():
+                        raise FileNotFoundError(f"scene image source not found: {source}")
+                    source_image = QImage(str(source))
+                    if source_image.isNull():
+                        raise CompositionError(f"unable to decode scene image: {source}")
+                    painter.drawImage(rect, source_image)
+                    continue
+
+                points = payload.get("points") or []
+                if len(points) < 2:
+                    continue
+                first = points[0]
+                path = QPainterPath(QPointF(_float(first[0], 0.0), _float(first[1], 0.0)))
+                for point in points[1:]:
+                    path.lineTo(_float(point[0], 0.0), _float(point[1], 0.0))
+                painter.setPen(
+                    QPen(
+                        QColor(str(payload.get("color", "#20232A"))),
+                        max(0.1, _float(payload.get("stroke"), 5.0)),
+                        Qt.PenStyle.SolidLine,
+                        Qt.PenCapStyle.RoundCap,
+                        Qt.PenJoinStyle.RoundJoin,
+                    )
+                )
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPath(path)
+            finally:
+                painter.restore()
+    finally:
+        painter.end()
+
+    if not image.save(str(output)):
+        raise CompositionError(f"unable to save scene snapshot: {output}")
+    return output
