@@ -101,8 +101,6 @@ def _camera_action(raw: Mapping[str, Any]) -> str:
         return "pan_right"
     if action in {"static", "none", "off"}:
         return "static"
-    # Recovered camera-motion paths primarily use zoom actions; fail-safe to
-    # the bounded slow zoom rather than silently dropping requested motion.
     return "slow_zoom"
 
 
@@ -206,13 +204,20 @@ def _camera_filter(width: int, height: int, fps: int, camera: str) -> str:
     )
 
 
-def build_image_filter_graph(width: int, height: int, fps: int, profile: RenderProfile) -> str:
+def build_image_filter_graph(
+    width: int,
+    height: int,
+    fps: int,
+    profile: RenderProfile,
+    *,
+    total_duration: float | None = None,
+) -> str:
     """Build a single-output FFmpeg filter graph labeled ``[outv]``.
 
-    Whiteboard mode is implemented as a progressive wipe from a clean white
-    canvas to the normalized source. Color reveal starts with a grayscale
-    version and progressively exposes color. Camera motion is applied before
-    the reveal so the visible scene remains spatially coherent.
+    ``total_duration`` is authoritative when supplied. This keeps recovered
+    object timing (pause/draw/push/outro) independent from the visual reveal
+    profile while preserving the existing profile-only behavior for callers
+    that do not have a scene timeline.
     """
     width = max(2, int(width))
     height = max(2, int(height))
@@ -221,7 +226,9 @@ def build_image_filter_graph(width: int, height: int, fps: int, profile: RenderP
     if height % 2:
         height -= 1
     fps = max(1, int(fps))
-    total = profile.total_duration
+    total = profile.total_duration if total_duration is None else float(total_duration)
+    if total <= 0:
+        raise ValueError("total_duration must be > 0")
     reveal = min(profile.reveal_duration, total)
     base = _normalization(width, height, fps) + _camera_filter(width, height, fps, profile.camera)
 
