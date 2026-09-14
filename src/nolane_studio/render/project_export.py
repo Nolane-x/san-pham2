@@ -24,6 +24,10 @@ class UnsupportedSceneRenderState(ValueError):
     """Raised when persisted scene behavior has no faithful renderer yet."""
 
 
+class MissingSceneMedia(FileNotFoundError):
+    """Raised when a visible persisted image/video source is unavailable."""
+
+
 _UNSUPPORTED_RENDER_STATE_FIELDS = (
     "remove_background_enabled",
     "auto_object_fx_enabled",
@@ -39,6 +43,23 @@ def validate_supported_scene_render_state(plan: SceneRenderPlan) -> None:
         if plan.render_config.get(field):
             raise UnsupportedSceneRenderState(
                 f"scene {plan.scene_id} uses unsupported persisted render state: {field}"
+            )
+
+
+def validate_project_scene_media(plans: Sequence[SceneRenderPlan]) -> None:
+    """Preflight every visible image/video source before any scene render starts."""
+    for plan in plans:
+        for obj in plan.objects:
+            kind = str(obj.get("kind", "")).strip().lower()
+            if kind not in {"image", "video"}:
+                continue
+            object_id = str(obj.get("id", "")).strip()
+            source = str(obj.get("source") or "").strip()
+            if source and Path(source).is_file():
+                continue
+            rendered_source = source or "<blank>"
+            raise MissingSceneMedia(
+                f"scene {plan.scene_id} object {object_id} missing {kind} source: {rendered_source}"
             )
 
 
@@ -112,12 +133,14 @@ class ProjectSceneExporter:
     recovered object-timed compositor; mixed whiteboard/source-video scenes
     with additional visible layers fail closed until their native timing and
     composition behavior is recovered; static/color-reveal scenes use a
-    lossless snapshot plus the existing image profile. Persisted scene options
-    that currently have no faithful renderer also fail closed instead of being
-    silently discarded. Temporary scene media remains alive for the whole
-    synchronous MediaExporter call. Persisted timeline state is consumed only
-    where recovered semantics are unambiguous; unsupported track payloads fail
-    closed instead of being silently dropped.
+    lossless snapshot plus the existing image profile. Every visible persisted
+    image/video source is preflighted across the whole project before any scene
+    renderer starts, so later missing media cannot leave a partially rendered
+    export. Persisted scene options that currently have no faithful renderer
+    also fail closed instead of being silently discarded. Temporary scene media
+    remains alive for the whole synchronous MediaExporter call. Persisted
+    timeline state is consumed only where recovered semantics are unambiguous;
+    unsupported track payloads fail closed instead of being silently dropped.
     """
 
     def __init__(
@@ -147,6 +170,7 @@ class ProjectSceneExporter:
         plans = build_scene_render_plan(self.store, project_id)
         if not plans:
             raise ValueError("project has no scenes to export")
+        validate_project_scene_media(plans)
 
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
