@@ -201,6 +201,7 @@ def build_object_reveal_command(
     duration = float(duration)
     if duration <= 0:
         raise ValueError("reveal duration must be > 0")
+    fps = max(1, int(fps))
     transition = _brush_transition(brush_mode)
     normalization = _normalize(width, height, fps)
     graph = (
@@ -211,12 +212,16 @@ def build_object_reveal_command(
     return [
         ffmpeg,
         "-y",
+        "-framerate",
+        str(fps),
         "-loop",
         "1",
         "-t",
         f"{duration:.6f}",
         "-i",
         before,
+        "-framerate",
+        str(fps),
         "-loop",
         "1",
         "-t",
