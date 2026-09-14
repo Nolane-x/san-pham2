@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
+from ..render.config import normalize_render_config
 from .schema import SCHEMA_SQL
 
 
@@ -232,6 +233,60 @@ class ProjectStore:
                 "UPDATE user_project_library SET updated_at=CURRENT_TIMESTAMP WHERE project_id=?",
                 (row["project_id"],),
             )
+
+    def update_scene_render_settings(
+        self,
+        scene_id: str,
+        *,
+        reveal_duration: float | None = None,
+        hold_duration: float | None = None,
+        settings: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM visual_editor_scenes WHERE id=?", (scene_id,)).fetchone()
+            if row is None:
+                raise KeyError(scene_id)
+            metadata = json.loads(row["metadata_json"] or "{}")
+            stored = dict(metadata.get("render_config") or {})
+            stored.update(dict(settings or {}))
+            stored["reveal_duration"] = row["reveal_duration"] if reveal_duration is None else reveal_duration
+            stored["hold_duration"] = row["hold_duration"] if hold_duration is None else hold_duration
+            normalized = normalize_render_config(stored)
+            canonical = dict(normalized)
+            extras = dict(canonical.pop("extras", {}) or {})
+            canonical.update(extras)
+            metadata["render_config"] = {
+                key: value
+                for key, value in canonical.items()
+                if key not in {"reveal_duration", "hold_duration"}
+            }
+            conn.execute(
+                """UPDATE visual_editor_scenes
+                   SET reveal_duration=?, hold_duration=?, metadata_json=?, updated_at=CURRENT_TIMESTAMP
+                   WHERE id=?""",
+                (
+                    normalized["reveal_duration"],
+                    normalized["hold_duration"],
+                    json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
+                    scene_id,
+                ),
+            )
+            conn.execute(
+                "UPDATE user_project_library SET updated_at=CURRENT_TIMESTAMP WHERE project_id=?",
+                (row["project_id"],),
+            )
+        return normalized
+
+    def get_scene_render_settings(self, scene_id: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM visual_editor_scenes WHERE id=?", (scene_id,)).fetchone()
+        if row is None:
+            raise KeyError(scene_id)
+        metadata = json.loads(row["metadata_json"] or "{}")
+        raw = dict(metadata.get("render_config") or {})
+        raw["reveal_duration"] = row["reveal_duration"]
+        raw["hold_duration"] = row["hold_duration"]
+        return normalize_render_config(raw)
 
     def move_scene(self, scene_id: str, new_position: int) -> None:
         target = int(new_position)
