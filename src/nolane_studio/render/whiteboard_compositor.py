@@ -177,6 +177,15 @@ def _normalize(width: int, height: int, fps: int) -> str:
     )
 
 
+def _brush_transition(brush_mode: str) -> str:
+    mode = str(brush_mode or "lr").strip().lower().replace("-", "_")
+    if mode == "lr":
+        return "wipeleft"
+    if mode == "rl":
+        return "wiperight"
+    raise UnsupportedWhiteboardMotion(f"unsupported whiteboard brush mode: {mode}")
+
+
 def build_object_reveal_command(
     ffmpeg: str,
     before: str,
@@ -184,6 +193,7 @@ def build_object_reveal_command(
     output: str,
     *,
     duration: float,
+    brush_mode: str = "lr",
     width: int = 1280,
     height: int = 720,
     fps: int = 24,
@@ -191,11 +201,12 @@ def build_object_reveal_command(
     duration = float(duration)
     if duration <= 0:
         raise ValueError("reveal duration must be > 0")
+    transition = _brush_transition(brush_mode)
     normalization = _normalize(width, height, fps)
     graph = (
         f"[0:v]{normalization},trim=duration={duration:.6f},setpts=PTS-STARTPTS[before];"
         f"[1:v]{normalization},trim=duration={duration:.6f},setpts=PTS-STARTPTS[after];"
-        f"[before][after]xfade=transition=wipeleft:duration={duration:.6f}:offset=0[outv]"
+        f"[before][after]xfade=transition={transition}:duration={duration:.6f}:offset=0[outv]"
     )
     return [
         ffmpeg,
@@ -603,6 +614,7 @@ class WhiteboardSceneCompositor:
                         str(after),
                         str(target),
                         duration=segment.duration,
+                        brush_mode=str(plan.render_config.get("brush_mode", "lr") or "lr"),
                         width=width,
                         height=height,
                         fps=fps,
