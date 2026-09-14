@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, Sequence
 
 from .schema import SCHEMA_SQL
 
@@ -73,7 +74,6 @@ class ProjectStore:
             raise KeyError(project_id)
         return dict(row)
 
-
     def list_projects(self, *, limit: int = 100) -> list[dict[str, Any]]:
         if limit < 1:
             raise ValueError("limit must be >= 1")
@@ -88,6 +88,209 @@ class ProjectStore:
                 (int(limit),),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    @staticmethod
+    def _scene_payload(scene: Any) -> tuple[str, str, str, str]:
+        text = str(getattr(scene, "text", "")).strip()
+        if not text:
+            raise ValueError("scene text must not be blank")
+        image_prompt = str(getattr(scene, "image_prompt", "") or "")
+        voice_text = str(getattr(scene, "voice_text", "") or text)
+        metadata = getattr(scene, "metadata", {}) or {}
+        return text, image_prompt, voice_text, json.dumps(dict(metadata), ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _sync_scene_count(conn: sqlite3.Connection, project_id: str) -> None:
+        count = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM visual_editor_scenes WHERE project_id=?",
+                (project_id,),
+            ).fetchone()[0]
+        )
+        conn.execute(
+            "UPDATE batch_projects SET expected_image_count=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (count, project_id),
+        )
+        conn.execute(
+            "UPDATE user_project_library SET updated_at=CURRENT_TIMESTAMP WHERE project_id=?",
+            (project_id,),
+        )
+
+    def replace_scenes(self, project_id: str, scenes: Sequence[Any]) -> None:
+        with self._connect() as conn:
+            if conn.execute("SELECT 1 FROM batch_projects WHERE id=?", (project_id,)).fetchone() is None:
+                raise KeyError(project_id)
+            conn.execute("DELETE FROM visual_editor_scenes WHERE project_id=?", (project_id,))
+            for position, scene in enumerate(scenes):
+                text, image_prompt, voice_text, metadata_json = self._scene_payload(scene)
+                conn.execute(
+                    """INSERT INTO visual_editor_scenes(
+                           id,project_id,position,text,image_prompt,voice_text,metadata_json
+                       ) VALUES(?,?,?,?,?,?,?)""",
+                    (uuid.uuid4().hex, project_id, position, text, image_prompt, voice_text, metadata_json),
+                )
+            self._sync_scene_count(conn, project_id)
+
+    def list_scenes(self, project_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM visual_editor_scenes WHERE project_id=? ORDER BY position, rowid",
+                (project_id,),
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            scene = dict(row)
+            scene["metadata"] = json.loads(scene.pop("metadata_json") or "{}")
+            result.append(scene)
+        return result
+
+    def add_scene(
+        self,
+        project_id: str,
+        text: str,
+        *,
+        position: int | None = None,
+        image_prompt: str = "",
+        voice_text: str = "",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> str:
+        text = str(text).strip()
+        if not text:
+            raise ValueError("scene text must not be blank")
+        with self._connect() as conn:
+            if conn.execute("SELECT 1 FROM batch_projects WHERE id=?", (project_id,)).fetchone() is None:
+                raise KeyError(project_id)
+            count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM visual_editor_scenes WHERE project_id=?",
+                    (project_id,),
+                ).fetchone()[0]
+            )
+            target = count if position is None else int(position)
+            if target < 0 or target > count:
+                raise ValueError(f"position must be within 0..{count}")
+            conn.execute(
+                "UPDATE visual_editor_scenes SET position=position+1, updated_at=CURRENT_TIMESTAMP WHERE project_id=? AND position>=?",
+                (project_id, target),
+            )
+            scene_id = uuid.uuid4().hex
+            conn.execute(
+                """INSERT INTO visual_editor_scenes(
+                       id,project_id,position,text,image_prompt,voice_text,metadata_json
+                   ) VALUES(?,?,?,?,?,?,?)""",
+                (
+                    scene_id,
+                    project_id,
+                    target,
+                    text,
+                    str(image_prompt or ""),
+                    str(voice_text or text),
+                    json.dumps(dict(metadata or {}), ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+            self._sync_scene_count(conn, project_id)
+            return scene_id
+
+    def update_scene(
+        self,
+        scene_id: str,
+        *,
+        text: str | None = None,
+        image_prompt: str | None = None,
+        voice_text: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM visual_editor_scenes WHERE id=?", (scene_id,)).fetchone()
+            if row is None:
+                raise KeyError(scene_id)
+            updates: list[str] = []
+            values: list[Any] = []
+            if text is not None:
+                normalized = str(text).strip()
+                if not normalized:
+                    raise ValueError("scene text must not be blank")
+                updates.append("text=?")
+                values.append(normalized)
+            if image_prompt is not None:
+                updates.append("image_prompt=?")
+                values.append(str(image_prompt))
+            if voice_text is not None:
+                updates.append("voice_text=?")
+                values.append(str(voice_text))
+            if metadata is not None:
+                updates.append("metadata_json=?")
+                values.append(json.dumps(dict(metadata), ensure_ascii=False, separators=(",", ":")))
+            if not updates:
+                return
+            updates.append("updated_at=CURRENT_TIMESTAMP")
+            values.append(scene_id)
+            conn.execute(f"UPDATE visual_editor_scenes SET {', '.join(updates)} WHERE id=?", values)
+            conn.execute(
+                "UPDATE user_project_library SET updated_at=CURRENT_TIMESTAMP WHERE project_id=?",
+                (row["project_id"],),
+            )
+
+    def move_scene(self, scene_id: str, new_position: int) -> None:
+        target = int(new_position)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT project_id, position FROM visual_editor_scenes WHERE id=?",
+                (scene_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(scene_id)
+            project_id = str(row["project_id"])
+            current = int(row["position"])
+            count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM visual_editor_scenes WHERE project_id=?",
+                    (project_id,),
+                ).fetchone()[0]
+            )
+            if target < 0 or target >= count:
+                raise ValueError(f"position must be within 0..{max(0, count - 1)}")
+            if target == current:
+                return
+            if current < target:
+                conn.execute(
+                    """UPDATE visual_editor_scenes
+                       SET position=position-1, updated_at=CURRENT_TIMESTAMP
+                       WHERE project_id=? AND position>? AND position<=?""",
+                    (project_id, current, target),
+                )
+            else:
+                conn.execute(
+                    """UPDATE visual_editor_scenes
+                       SET position=position+1, updated_at=CURRENT_TIMESTAMP
+                       WHERE project_id=? AND position>=? AND position<?""",
+                    (project_id, target, current),
+                )
+            conn.execute(
+                "UPDATE visual_editor_scenes SET position=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (target, scene_id),
+            )
+            conn.execute(
+                "UPDATE user_project_library SET updated_at=CURRENT_TIMESTAMP WHERE project_id=?",
+                (project_id,),
+            )
+
+    def delete_scene(self, scene_id: str) -> None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT project_id, position FROM visual_editor_scenes WHERE id=?",
+                (scene_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(scene_id)
+            project_id = str(row["project_id"])
+            position = int(row["position"])
+            conn.execute("DELETE FROM visual_editor_scenes WHERE id=?", (scene_id,))
+            conn.execute(
+                "UPDATE visual_editor_scenes SET position=position-1, updated_at=CURRENT_TIMESTAMP WHERE project_id=? AND position>?",
+                (project_id, position),
+            )
+            self._sync_scene_count(conn, project_id)
 
     def add_item(
         self,
@@ -146,8 +349,6 @@ class ProjectStore:
         duration: float | None = None,
         media_id: str | None = None,
     ) -> str:
-        import uuid
-
         kind = str(kind).strip().lower()
         if kind not in {"image", "video", "audio"}:
             raise ValueError("kind must be image, video, or audio")
