@@ -21,28 +21,47 @@ class WhiteboardSegment:
     duration: float
     before_ids: tuple[str, ...]
     after_ids: tuple[str, ...]
+    object_id: str | None = None
+    direction: str | None = None
 
     def __post_init__(self) -> None:
         kind = str(self.kind).strip().lower()
-        if kind not in {"hold", "reveal"}:
-            raise ValueError("whiteboard segment kind must be hold or reveal")
+        if kind not in {"hold", "reveal", "push"}:
+            raise ValueError("whiteboard segment kind must be hold, reveal, or push")
         duration = float(self.duration)
         if duration <= 0:
             raise ValueError("whiteboard segment duration must be > 0")
+        object_id = None if self.object_id is None else str(self.object_id).strip()
+        direction = None if self.direction is None else str(self.direction).strip().lower().replace("-", "_")
+        if kind == "push" and (not object_id or not direction):
+            raise ValueError("push segment requires object_id and direction")
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "duration", duration)
+        object.__setattr__(self, "object_id", object_id)
+        object.__setattr__(self, "direction", direction)
 
 
 LayerRenderer = Callable[..., Path]
 
 
-def build_whiteboard_segments(plan: SceneRenderPlan) -> list[WhiteboardSegment]:
-    """Translate recovered per-object timing into an additive reveal timeline.
+def _push_direction(plan: SceneRenderPlan) -> str:
+    value = plan.render_config.get("large_object_push_direction", "from_left")
+    direction = str(value or "from_left").strip().lower().replace("-", "_")
+    # ``from_left`` is the recovered default and is the only direction whose
+    # behavior is currently backed strongly enough to render instead of guess.
+    if direction != "from_left":
+        raise UnsupportedWhiteboardMotion(f"unsupported whiteboard push direction: {direction}")
+    return direction
 
-    Pause and draw phases are represented exactly. A draw phase progressively
-    wipes from the cumulative state before an object to the cumulative state
-    including that object. Recovered push phases are *not* approximated as a
-    hold: they fail closed until the dedicated push-motion renderer exists.
+
+def build_whiteboard_segments(plan: SceneRenderPlan) -> list[WhiteboardSegment]:
+    """Translate recovered per-object timing into an additive whiteboard timeline.
+
+    Pause and draw phases remain exact additive phases. The recovered default
+    object-push direction (``from_left``) is represented as a dedicated motion
+    phase after the object's reveal and before the next object's timing begins.
+    Directions whose original native-engine behavior has not been recovered
+    strongly enough still fail closed rather than being approximated.
     """
     if plan.profile.style != "whiteboard":
         raise ValueError("whiteboard segments require a whiteboard render profile")
@@ -64,10 +83,6 @@ def build_whiteboard_segments(plan: SceneRenderPlan) -> list[WhiteboardSegment]:
     epsilon = 1e-9
 
     for entry in plan.object_timing:
-        if entry.push > epsilon:
-            raise UnsupportedWhiteboardMotion(
-                f"whiteboard object {entry.object_id} requires push motion"
-            )
         if entry.start + epsilon < cursor:
             raise CompositionError("whiteboard timing overlaps previous object phase")
 
@@ -82,6 +97,20 @@ def build_whiteboard_segments(plan: SceneRenderPlan) -> list[WhiteboardSegment]:
         if entry.draw > epsilon:
             segments.append(WhiteboardSegment("reveal", entry.draw, current, after))
         revealed.append(entry.object_id)
+
+        if entry.push > epsilon:
+            direction = _push_direction(plan)
+            persisted = tuple(revealed)
+            segments.append(
+                WhiteboardSegment(
+                    "push",
+                    entry.push,
+                    persisted,
+                    persisted,
+                    object_id=entry.object_id,
+                    direction=direction,
+                )
+            )
         cursor = entry.end
 
     remaining = float(plan.total_duration) - cursor
@@ -186,6 +215,105 @@ def build_object_reveal_command(
     ]
 
 
+def build_object_push_command(
+    ffmpeg: str,
+    base: str,
+    object_layer: str,
+    output: str,
+    *,
+    duration: float,
+    direction: str,
+    width: int = 1280,
+    height: int = 720,
+    fps: int = 24,
+) -> list[str]:
+    """Build the behaviorally recovered from-left object-entry/push segment.
+
+    The old native engine exposes direction/config, movement and persistence,
+    but not source-exact motion equations. We therefore implement only the
+    recovered default ``from_left`` contract: the isolated object layer moves
+    from outside the left canvas edge to its persisted editor geometry while
+    all previously revealed objects remain fixed.
+    """
+    duration = float(duration)
+    if duration <= 0:
+        raise ValueError("push duration must be > 0")
+    direction = str(direction).strip().lower().replace("-", "_")
+    if direction != "from_left":
+        raise UnsupportedWhiteboardMotion(f"unsupported whiteboard push direction: {direction}")
+
+    width = max(2, int(width))
+    height = max(2, int(height))
+    if width % 2:
+        width -= 1
+    if height % 2:
+        height -= 1
+    fps = max(1, int(fps))
+    normalization = _normalize(width, height, fps)
+    x_expression = f"-{width}+{width}*min(t/{duration:.6f},1)"
+    graph = (
+        f"[0:v]{normalization},trim=duration={duration:.6f},setpts=PTS-STARTPTS[base];"
+        f"[1:v]scale={width}:{height},format=rgba,fps={fps},setsar=1,"
+        f"trim=duration={duration:.6f},setpts=PTS-STARTPTS[object];"
+        f"[base][object]overlay=x='{x_expression}':y=0:eval=frame:shortest=1[outv]"
+    )
+    return [
+        ffmpeg,
+        "-y",
+        "-loop",
+        "1",
+        "-t",
+        f"{duration:.6f}",
+        "-i",
+        base,
+        "-loop",
+        "1",
+        "-t",
+        f"{duration:.6f}",
+        "-i",
+        object_layer,
+        "-f",
+        "lavfi",
+        "-t",
+        f"{duration:.6f}",
+        "-i",
+        "anullsrc=channel_layout=stereo:sample_rate=48000",
+        "-filter_complex",
+        graph,
+        "-map",
+        "[outv]",
+        "-map",
+        "2:a:0",
+        "-t",
+        f"{duration:.6f}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-threads",
+        "1",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-profile:v",
+        "high",
+        "-level",
+        "4.1",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "160k",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-movflags",
+        "+faststart",
+        output,
+    ]
+
+
 def _concat_escape(path: Path) -> str:
     return str(path.resolve()).replace("\\", "/").replace("'", "'\\''")
 
@@ -225,6 +353,7 @@ class WhiteboardSceneCompositor:
         with tempfile.TemporaryDirectory(prefix="nolane-studio-whiteboard-") as temp_raw:
             temp = Path(temp_raw)
             state_paths: dict[tuple[str, ...], Path] = {}
+            object_layer_paths: dict[str, Path] = {}
 
             def ensure_state(state: tuple[str, ...]) -> Path:
                 existing = state_paths.get(state)
@@ -243,6 +372,24 @@ class WhiteboardSceneCompositor:
                     )
                 )
                 state_paths[state] = rendered
+                return rendered
+
+            def ensure_object_layer(object_id: str) -> Path:
+                existing = object_layer_paths.get(object_id)
+                if existing is not None:
+                    return existing
+                path = temp / f"object-{len(object_layer_paths):04d}-{object_id}.png"
+                rendered = Path(
+                    self.layer_renderer(
+                        plan,
+                        path,
+                        objects=[objects_by_id[object_id]],
+                        transparent=True,
+                        width=width,
+                        height=height,
+                    )
+                )
+                object_layer_paths[object_id] = rendered
                 return rendered
 
             # Resolve states in first-use order so the compositor stays
@@ -266,13 +413,29 @@ class WhiteboardSceneCompositor:
                         height=height,
                         fps=fps,
                     )
-                else:
+                elif segment.kind == "reveal":
                     command = build_object_reveal_command(
                         self.ffmpeg,
                         str(before),
                         str(after),
                         str(target),
                         duration=segment.duration,
+                        width=width,
+                        height=height,
+                        fps=fps,
+                    )
+                else:
+                    assert segment.object_id is not None and segment.direction is not None
+                    base_ids = tuple(object_id for object_id in segment.after_ids if object_id != segment.object_id)
+                    base = ensure_state(base_ids)
+                    object_layer = ensure_object_layer(segment.object_id)
+                    command = build_object_push_command(
+                        self.ffmpeg,
+                        str(base),
+                        str(object_layer),
+                        str(target),
+                        duration=segment.duration,
+                        direction=segment.direction,
                         width=width,
                         height=height,
                         fps=fps,
