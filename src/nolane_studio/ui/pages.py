@@ -299,7 +299,7 @@ class StudioPage(QWidget):
         tabs.addItems(["Drawing", "Motion", "Voice", "Timing"])
         inspector_layout.addWidget(tabs)
 
-        scene_text_label = QLabel("Scene text")
+        scene_text_label = QLabel("Narration / description")
         scene_text_label.setObjectName("muted")
         inspector_layout.addWidget(scene_text_label)
         self.scene_text_edit = QTextEdit()
