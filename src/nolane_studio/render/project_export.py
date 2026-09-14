@@ -7,9 +7,11 @@ from typing import Callable, Protocol, Sequence
 from .compositor import render_scene_snapshot
 from .exporter import ExportClip, MediaExporter
 from .scene_plan import ScenePlanStore, SceneRenderPlan, build_scene_render_plan
+from .video_compositor import SceneVideoCompositor
 
 
 SnapshotRenderer = Callable[[SceneRenderPlan, str | Path], Path]
+VideoRenderer = Callable[..., Path]
 
 
 class SceneMediaExporter(Protocol):
@@ -22,13 +24,13 @@ class SceneMediaExporter(Protocol):
 
 
 class ProjectSceneExporter:
-    """Export persisted scenes instead of the loose imported-media list.
+    """Export persisted scene/canvas state instead of loose imported media.
 
-    Scene snapshots live for the entire synchronous media-export call, so a
-    background worker can safely let FFmpeg consume them before the temporary
-    workspace is removed. Composition errors (notably video-layer routing)
-    propagate unchanged; parity code never falls back to silently dropping a
-    canvas layer.
+    Static scenes are rasterized to a lossless snapshot before their recovered
+    image effect profile is applied. Scenes containing source video are routed
+    through the dedicated video compositor, which preserves the static bands
+    around that video and returns a normalized scene segment. Temporary scene
+    media remains alive for the whole synchronous MediaExporter call.
     """
 
     def __init__(
@@ -37,10 +39,12 @@ class ProjectSceneExporter:
         *,
         media_exporter: SceneMediaExporter | None = None,
         snapshot_renderer: SnapshotRenderer = render_scene_snapshot,
+        video_renderer: VideoRenderer | None = None,
     ) -> None:
         self.store = store
         self.media_exporter = media_exporter or MediaExporter()
         self.snapshot_renderer = snapshot_renderer
+        self.video_renderer = video_renderer or SceneVideoCompositor().render
 
     def export(
         self,
@@ -62,6 +66,34 @@ class ProjectSceneExporter:
             temp = Path(temp_raw)
             clips: list[ExportClip] = []
             for index, plan in enumerate(plans):
+                has_video = any(
+                    str(obj.get("kind", "")).strip().lower() == "video"
+                    and bool(obj.get("visible", True))
+                    for obj in plan.objects
+                )
+                if has_video:
+                    scene_video = temp / f"scene-{index:04d}-{plan.scene_id}.mp4"
+                    rendered_video = Path(
+                        self.video_renderer(
+                            plan,
+                            scene_video,
+                            width=width,
+                            height=height,
+                            fps=fps,
+                        )
+                    )
+                    clips.append(
+                        ExportClip(
+                            str(rendered_video),
+                            "video",
+                            duration=plan.total_duration,
+                            trim_start=0.0,
+                            trim_end=plan.total_duration,
+                            clip_id=plan.scene_id,
+                        )
+                    )
+                    continue
+
                 snapshot = temp / f"scene-{index:04d}-{plan.scene_id}.png"
                 rendered = Path(self.snapshot_renderer(plan, snapshot))
                 clips.append(
