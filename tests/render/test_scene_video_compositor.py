@@ -52,6 +52,13 @@ def _plan(objects, *, duration=5.0):
     )
 
 
+def _touch_layer(actual_plan, output, *, objects, transparent, width, height):
+    del actual_plan, objects, transparent, width, height
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
+    Path(output).touch()
+    return Path(output)
+
+
 def test_video_compositor_preserves_static_layers_below_and_above_video(tmp_path):
     video = tmp_path / "clip.mp4"
     video.touch()
@@ -109,6 +116,50 @@ def test_video_compositor_preserves_static_layers_below_and_above_video(tmp_path
     assert "0:a:0" not in joined
     assert "1:a:0?" in joined
     assert runner.commands[0][-1] == str(output)
+
+
+def test_video_compositor_rotates_about_persisted_top_left_origin(tmp_path):
+    video = tmp_path / "rotated.mp4"
+    video.touch()
+    plan = _plan(
+        [
+            {
+                "id": "video",
+                "kind": "video",
+                "source": str(video),
+                "x": 120,
+                "y": 80,
+                "width": 640,
+                "height": 360,
+                "rotation": 90,
+                "opacity": 0.75,
+                "z_index": 0,
+                "visible": True,
+                "payload": {},
+            }
+        ]
+    )
+    runner = FakeRunner()
+    compositor = SceneVideoCompositor(
+        ffmpeg="ffmpeg",
+        runner=runner,
+        audio_probe=lambda path: True,
+        layer_renderer=_touch_layer,
+    )
+
+    result = compositor.render(plan, tmp_path / "rotated-out.mp4")
+
+    assert result.is_file()
+    assert len(runner.commands) == 1
+    joined = " ".join(runner.commands[0])
+    assert "format=rgba" in joined
+    assert "rotate=1.570796327" in joined
+    assert "ow='rotw(iw)'" in joined
+    assert "oh='roth(ih)'" in joined
+    # Canvas/QPainter rotates around the object's local (0, 0). For +90° the
+    # 640x360 rectangle extends 360 px to the left while its top edge stays at y.
+    assert "overlay=x=-240.000000:y=80.000000" in joined
+    assert "1:a:0?" in joined
 
 
 def test_video_compositor_rejects_multiple_video_layers_instead_of_dropping_one(tmp_path):
