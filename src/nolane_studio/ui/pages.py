@@ -64,7 +64,7 @@ class ExportWorker(QThread):
     def run(self) -> None:
         try:
             MediaExporter().export(self.clips, self.output_path)
-        except Exception as exc:  # boundary: surface media/runtime errors in the UI
+        except Exception as exc:
             self.failed.emit(str(exc))
         else:
             self.completed.emit(self.output_path)
@@ -279,6 +279,12 @@ class StudioPage(QWidget):
         canvas_head = QHBoxLayout()
         canvas_head.addWidget(SectionTitle("Composition", "Canvas", "16:9 · 1280 × 720 · 24 fps"))
         canvas_head.addStretch(1)
+        self.draw_button = QPushButton("Draw")
+        self.draw_button.setObjectName("ghost")
+        self.draw_button.setCheckable(True)
+        self.draw_button.setEnabled(False)
+        self.draw_button.setToolTip("Draw a persistent freehand layer on the selected scene")
+        canvas_head.addWidget(self.draw_button)
         zoom = QLabel("Fit  •  100%")
         zoom.setObjectName("chip")
         canvas_head.addWidget(zoom)
@@ -289,6 +295,8 @@ class StudioPage(QWidget):
         self.canvas = CanvasEditor()
         self.canvas.object_selected.connect(self._select_object_from_canvas)
         self.canvas.object_transform_changed.connect(self._canvas_object_transform_changed)
+        self.canvas.drawing_completed.connect(self._persist_freehand_drawing)
+        self.draw_button.toggled.connect(self.canvas.set_drawing_enabled)
         canvas_surface_layout.addWidget(self.canvas, 1)
         canvas_layout.addWidget(canvas_surface, 1)
 
@@ -533,6 +541,8 @@ class StudioPage(QWidget):
     def _load_selected_scene_editor(self, current, previous) -> None:
         del previous
         if current is None:
+            self.draw_button.setChecked(False)
+            self.draw_button.setEnabled(False)
             self.scene_text_edit.clear()
             self.scene_text_edit.setEnabled(False)
             self._set_render_controls_enabled(False)
@@ -540,11 +550,14 @@ class StudioPage(QWidget):
             return
         scene = self._scene_by_id(current.data(Qt.ItemDataRole.UserRole))
         if scene is None:
+            self.draw_button.setChecked(False)
+            self.draw_button.setEnabled(False)
             self.scene_text_edit.clear()
             self.scene_text_edit.setEnabled(False)
             self._set_render_controls_enabled(False)
             self._refresh_canvas_objects()
             return
+        self.draw_button.setEnabled(True)
         self.scene_text_edit.setEnabled(True)
         self.scene_text_edit.setPlainText(scene["text"])
         self._load_render_controls(scene["id"])
@@ -712,6 +725,26 @@ class StudioPage(QWidget):
         current_row = self.scenes.currentRow()
         self._refresh_scenes(selected_id=scene_id, fallback_row=current_row)
         self.status_message.emit("Scene saved")
+
+    def _persist_freehand_drawing(self, points: list) -> None:
+        scene_id = self._selected_scene_id()
+        if not scene_id:
+            return
+        normalized = [[float(point[0]), float(point[1])] for point in points]
+        if len(normalized) < 2:
+            return
+        object_id = self.store.add_visual_object(
+            scene_id,
+            "drawing",
+            name=f"Drawing {len(self.store.list_visual_objects(scene_id)) + 1}",
+            x=0.0,
+            y=0.0,
+            width=CanvasEditor.CANVAS_WIDTH,
+            height=CanvasEditor.CANVAS_HEIGHT,
+            payload={"points": normalized, "color": "#20232A", "stroke": 5.0},
+        )
+        self._refresh_canvas_objects(selected_object_id=object_id)
+        self.status_message.emit("Drawing layer saved")
 
     def _add_text_object(self) -> None:
         scene_id = self._selected_scene_id()
