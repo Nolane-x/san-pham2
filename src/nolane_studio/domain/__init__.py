@@ -1,3 +1,3 @@
-from .models import ProjectSpec, RenderConfig, Scene, TransitionSpec, VoiceRequest
+from .models import ImageRequest, ProjectSpec, RenderConfig, Scene, TransitionSpec, VoiceRequest
 
-__all__ = ["ProjectSpec", "RenderConfig", "Scene", "TransitionSpec", "VoiceRequest"]
+__all__ = ["ImageRequest", "ProjectSpec", "RenderConfig", "Scene", "TransitionSpec", "VoiceRequest"]

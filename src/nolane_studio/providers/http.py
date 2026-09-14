@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import base64
 import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, Sequence
 
-from nolane_studio.domain import Scene, VoiceRequest
+from nolane_studio.domain import ImageRequest, Scene, VoiceRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,11 +90,7 @@ class OpenAICompatibleTTSProvider:
 
 
 class GenericHttpTTSProvider:
-    """Simple JSON-in/binary-out provider useful for self-hosted wrappers.
-
-    The wrapper receives stable Nolane Studio fields and can bridge to Piper, V-TTS,
-    VieNeu or another local service without putting model code in the desktop app.
-    """
+    """Simple JSON-in/binary-out provider useful for self-hosted wrappers."""
 
     def __init__(self, endpoint: str, *, headers: Mapping[str, str] | None = None, transport: HttpTransport | None = None):
         self.endpoint = endpoint
@@ -114,6 +111,48 @@ class GenericHttpTTSProvider:
         if not 200 <= response.status < 300:
             raise RuntimeError(f"generic TTS provider returned HTTP {response.status}")
         return response.body
+
+
+class OpenAICompatibleImageProvider:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str | None,
+        model: str,
+        *,
+        transport: HttpTransport | None = None,
+        timeout: float = 180.0,
+    ) -> None:
+        self.base_url = base_url
+        self.api_key = api_key
+        self.model = model
+        self.transport = transport or UrllibTransport()
+        self.timeout = timeout
+
+    def generate(self, request: ImageRequest) -> bytes:
+        response = self.transport.request(
+            "POST",
+            _join(self.base_url, "images/generations"),
+            headers=_auth_headers(self.api_key),
+            json_body={
+                "model": self.model,
+                "prompt": request.prompt,
+                "size": request.size,
+                "response_format": "b64_json",
+                "n": 1,
+            },
+            timeout=self.timeout,
+        )
+        if not 200 <= response.status < 300:
+            raise RuntimeError(f"image provider returned HTTP {response.status}")
+        try:
+            envelope = json.loads(response.body.decode("utf-8"))
+            encoded = envelope["data"][0]["b64_json"]
+            if not isinstance(encoded, str) or not encoded:
+                raise ValueError
+            return base64.b64decode(encoded, validate=True)
+        except (KeyError, IndexError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("image provider returned malformed response") from exc
 
 
 class OpenAICompatibleAnalysisProvider:

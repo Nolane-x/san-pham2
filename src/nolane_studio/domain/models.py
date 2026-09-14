@@ -106,3 +106,21 @@ class VoiceRequest:
         object.__setattr__(self, "language", _non_blank(self.language, "language"))
         if self.speed <= 0:
             raise ValueError("speed must be > 0")
+
+
+@dataclass(frozen=True, slots=True)
+class ImageRequest:
+    prompt: str
+    size: str = "1024x1024"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "prompt", _non_blank(self.prompt, "prompt"))
+        size = _non_blank(self.size, "size").lower()
+        try:
+            width_text, height_text = size.split("x", 1)
+            width, height = int(width_text), int(height_text)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("size must use WIDTHxHEIGHT") from exc
+        if width <= 0 or height <= 0:
+            raise ValueError("image dimensions must be positive")
+        object.__setattr__(self, "size", f"{width}x{height}")
