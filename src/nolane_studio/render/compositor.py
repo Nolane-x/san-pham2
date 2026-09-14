@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from .scene_plan import SceneRenderPlan
 
@@ -25,22 +25,29 @@ def _bounded_opacity(value: Any) -> float:
     return max(0.0, min(1.0, _float(value, 1.0)))
 
 
-def render_scene_snapshot(
+def _ordered_visible(objects: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        (dict(obj) for obj in objects if bool(obj.get("visible", True))),
+        key=lambda obj: (int(obj.get("z_index", 0)), str(obj.get("id", ""))),
+    )
+
+
+def render_scene_layer_snapshot(
     plan: SceneRenderPlan,
     output_path: str | Path,
     *,
+    objects: Sequence[Mapping[str, Any]],
+    transparent: bool,
     width: int = 1280,
     height: int = 720,
     background: str = "#F5F3EC",
 ) -> Path:
-    """Rasterize a persisted scene without dropping static canvas layers.
+    """Rasterize one ordered static band of a persisted scene.
 
-    Text, shapes, images and freehand drawing use the same top-left transform
-    model as :class:`CanvasEditor`. A video layer cannot be represented by a
-    still snapshot, so it is rejected explicitly and routed to the later
-    source-video composition path instead of being silently omitted.
+    Video layers are intentionally rejected here. The source-video compositor
+    uses this function for the static bands below and above the video so z-order
+    is preserved without flattening or silently dropping a canvas layer.
     """
-    # Keep Qt out of core imports/startup; rendering loads it only on demand.
     from PySide6.QtCore import QPointF, QRectF, Qt
     from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
 
@@ -48,12 +55,13 @@ def render_scene_snapshot(
     height = max(2, int(height))
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
+    ordered = _ordered_visible(objects)
 
-    ordered = sorted(
-        (dict(obj) for obj in plan.objects if bool(obj.get("visible", True))),
-        key=lambda obj: (int(obj.get("z_index", 0)), str(obj.get("id", ""))),
-    )
-    video_ids = [str(obj.get("id", "")) for obj in ordered if str(obj.get("kind", "")).lower() == "video"]
+    video_ids = [
+        str(obj.get("id", ""))
+        for obj in ordered
+        if str(obj.get("kind", "")).strip().lower() == "video"
+    ]
     if video_ids:
         raise CompositionRequiresVideo(
             f"scene {plan.scene_id} requires video composition for object(s): {', '.join(video_ids)}"
@@ -62,7 +70,7 @@ def render_scene_snapshot(
     image = QImage(width, height, QImage.Format.Format_ARGB32)
     if image.isNull():
         raise CompositionError(f"unable to allocate {width}x{height} scene image")
-    image.fill(QColor(background))
+    image.fill(QColor(0, 0, 0, 0) if transparent else QColor(background))
 
     painter = QPainter(image)
     if not painter.isActive():
@@ -84,7 +92,9 @@ def render_scene_snapshot(
             object_width = max(0.0, _float(obj.get("width"), 320.0))
             object_height = max(0.0, _float(obj.get("height"), 180.0))
             rotation = _float(obj.get("rotation"), 0.0)
-            payload: Mapping[str, Any] = obj.get("payload") if isinstance(obj.get("payload"), Mapping) else {}
+            payload: Mapping[str, Any] = (
+                obj.get("payload") if isinstance(obj.get("payload"), Mapping) else {}
+            )
 
             painter.save()
             try:
@@ -147,3 +157,33 @@ def render_scene_snapshot(
     if not image.save(str(output)):
         raise CompositionError(f"unable to save scene snapshot: {output}")
     return output
+
+
+def render_scene_snapshot(
+    plan: SceneRenderPlan,
+    output_path: str | Path,
+    *,
+    width: int = 1280,
+    height: int = 720,
+    background: str = "#F5F3EC",
+) -> Path:
+    """Rasterize a persisted scene without dropping static canvas layers."""
+    ordered = _ordered_visible(plan.objects)
+    video_ids = [
+        str(obj.get("id", ""))
+        for obj in ordered
+        if str(obj.get("kind", "")).strip().lower() == "video"
+    ]
+    if video_ids:
+        raise CompositionRequiresVideo(
+            f"scene {plan.scene_id} requires video composition for object(s): {', '.join(video_ids)}"
+        )
+    return render_scene_layer_snapshot(
+        plan,
+        output_path,
+        objects=ordered,
+        transparent=False,
+        width=width,
+        height=height,
+        background=background,
+    )
