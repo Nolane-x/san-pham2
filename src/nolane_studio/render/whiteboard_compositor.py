@@ -205,8 +205,8 @@ def build_object_reveal_command(
     transition = _brush_transition(brush_mode)
     normalization = _normalize(width, height, fps)
     graph = (
-        f"[0:v]{normalization},trim=duration={duration:.6f},setpts=PTS-STARTPTS[before];"
-        f"[1:v]{normalization},trim=duration={duration:.6f},setpts=PTS-STARTPTS[after];"
+        f"[0:v]{normalization},trim=duration={duration:.6f},setpts=PTS-STARTPTS,fps={fps}[before];"
+        f"[1:v]{normalization},trim=duration={duration:.6f},setpts=PTS-STARTPTS,fps={fps}[after];"
         f"[before][after]xfade=transition={transition}:duration={duration:.6f}:offset=0[outv]"
     )
     return [
