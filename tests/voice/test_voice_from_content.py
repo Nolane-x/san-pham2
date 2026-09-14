@@ -38,9 +38,18 @@ def test_voice_from_content_generates_scene_audio_and_reuses_stable_media_slot(t
     scene = store.list_scenes("p1")[0]
     assert scene["metadata"]["voice_media_id"] == artifact.media_id
     assert scene["metadata"]["voice_path"] == str(path)
+    assert scene["metadata"]["voice_cache_key"]
     assert [item["id"] for item in store.list_media("p1") if item["kind"] == "audio"] == [artifact.media_id]
 
-    again = service.synthesize_scene("p1", scene_id, provider_name="tts-api", language="vi-VN")
+    again = service.synthesize_scene(
+        "p1", scene_id, provider_name="tts-api", language="vi-VN", voice="vi-demo"
+    )
     assert again.media_id == artifact.media_id
     assert len([item for item in store.list_media("p1") if item["kind"] == "audio"]) == 1
+    assert len(fake.calls) == 1
+
+    store.update_scene(scene_id, voice_text="Noi dung moi")
+    service.synthesize_scene(
+        "p1", scene_id, provider_name="tts-api", language="vi-VN", voice="vi-demo"
+    )
     assert len(fake.calls) == 2
