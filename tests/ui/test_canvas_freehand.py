@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# TDD RED sentinel: CanvasEditor intentionally lacks this freehand API at this commit.
 from PySide6.QtWidgets import QApplication
 
 from nolane_studio.ui.widgets import CanvasEditor
