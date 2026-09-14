@@ -8,7 +8,7 @@ from .compositor import render_scene_snapshot
 from .exporter import ExportClip, MediaExporter
 from .scene_plan import ScenePlanStore, SceneRenderPlan, build_scene_render_plan
 from .video_compositor import SceneVideoCompositor
-from .whiteboard_compositor import WhiteboardSceneCompositor
+from .whiteboard_compositor import UnsupportedWhiteboardMotion, WhiteboardSceneCompositor
 
 
 SnapshotRenderer = Callable[[SceneRenderPlan, str | Path], Path]
@@ -85,13 +85,15 @@ def apply_persisted_timeline_state(
 class ProjectSceneExporter:
     """Export persisted scene/canvas state instead of loose imported media.
 
-    Routing is intentionally lossless and explicit: source-video scenes use the
-    video compositor first; ordinary whiteboard scenes use the recovered
-    object-timed compositor; static/color-reveal scenes use a lossless snapshot
-    plus the existing image profile. Temporary scene media remains alive for
-    the whole synchronous MediaExporter call. Persisted timeline state is
-    consumed only where recovered semantics are unambiguous; unsupported track
-    payloads fail closed instead of being silently dropped.
+    Routing is intentionally lossless and explicit: supported source-video
+    scenes use the video compositor; ordinary whiteboard scenes use the
+    recovered object-timed compositor; whiteboard/source-video combinations
+    fail closed until their native timing/composition behavior is recovered;
+    static/color-reveal scenes use a lossless snapshot plus the existing image
+    profile. Temporary scene media remains alive for the whole synchronous
+    MediaExporter call. Persisted timeline state is consumed only where
+    recovered semantics are unambiguous; unsupported track payloads fail closed
+    instead of being silently dropped.
     """
 
     def __init__(
@@ -134,6 +136,10 @@ class ProjectSceneExporter:
                     and bool(obj.get("visible", True))
                     for obj in plan.objects
                 )
+                if has_video and plan.profile.style == "whiteboard":
+                    raise UnsupportedWhiteboardMotion(
+                        "whiteboard source-video composition is not yet supported"
+                    )
                 if has_video:
                     scene_video = temp / f"scene-{index:04d}-{plan.scene_id}.mp4"
                     rendered_video = Path(
