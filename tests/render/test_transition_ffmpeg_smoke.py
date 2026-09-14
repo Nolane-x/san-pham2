@@ -65,6 +65,7 @@ def test_real_ffmpeg_additive_transition_smoke(tmp_path):
         str(transition),
         effect="fade",
         duration=0.25,
+        fps=fps,
     )
     runner.run(command, timeout=30)
 
