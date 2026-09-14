@@ -9,6 +9,7 @@ from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -350,20 +351,59 @@ class StudioPage(QWidget):
         save_scene.clicked.connect(self._save_selected_scene)
         inspector_layout.addWidget(save_scene)
 
-        for label, value in (("Reveal", "8.0 s"), ("Hold", "1.0 s"), ("Brush", "Left → right"), ("Camera", "Static")):
-            row = QFrame()
-            lay = QHBoxLayout(row)
-            lay.setContentsMargins(0, 4, 0, 4)
-            k = QLabel(label)
-            k.setObjectName("muted")
-            v = QLabel(value)
-            v.setStyleSheet("font-weight:700;color:#F5F7FB")
-            lay.addWidget(k)
-            lay.addStretch(1)
-            lay.addWidget(v)
-            inspector_layout.addWidget(row)
-        inspector_layout.addWidget(QCheckBox("Remove image background"))
-        inspector_layout.addWidget(QCheckBox("Auto object sound FX"))
+        settings_grid = QGridLayout()
+        settings_grid.setContentsMargins(0, 0, 0, 0)
+        settings_grid.setHorizontalSpacing(8)
+        settings_grid.setVerticalSpacing(7)
+
+        self.reveal_spin = QDoubleSpinBox()
+        self.reveal_spin.setRange(0.0, 3600.0)
+        self.reveal_spin.setDecimals(2)
+        self.reveal_spin.setSingleStep(0.25)
+        self.reveal_spin.setSuffix(" s")
+        self.hold_spin = QDoubleSpinBox()
+        self.hold_spin.setRange(0.0, 3600.0)
+        self.hold_spin.setDecimals(2)
+        self.hold_spin.setSingleStep(0.25)
+        self.hold_spin.setSuffix(" s")
+
+        self.render_style_combo = QComboBox()
+        self.render_style_combo.addItem("Whiteboard", "whiteboard")
+        self.render_style_combo.addItem("Color reveal", "color_reveal")
+        self.visual_mode_combo = QComboBox()
+        self.visual_mode_combo.addItem("Drawing", "drawing")
+        self.visual_mode_combo.addItem("Camera motion", "camera_motion")
+        self.brush_mode_combo = QComboBox()
+        self.brush_mode_combo.addItem("Left → right", "lr")
+        self.brush_mode_combo.addItem("Right → left", "rl")
+        self.hand_style_combo = QComboBox()
+        self.hand_style_combo.addItem("Hand 1", "hand-1.png")
+        self.hand_style_combo.addItem("Hand 2", "hand-2.png")
+        self.hand_style_combo.addItem("Hand 3", "hand-3.png")
+        self.object_timing_combo = QComboBox()
+        self.object_timing_combo.addItem("Fixed", "fixed")
+        self.object_timing_combo.addItem("Custom", "custom")
+
+        controls = (
+            ("Reveal", self.reveal_spin),
+            ("Hold", self.hold_spin),
+            ("Style", self.render_style_combo),
+            ("Mode", self.visual_mode_combo),
+            ("Brush", self.brush_mode_combo),
+            ("Hand", self.hand_style_combo),
+            ("Timing", self.object_timing_combo),
+        )
+        for row_index, (label, widget) in enumerate(controls):
+            key = QLabel(label)
+            key.setObjectName("muted")
+            settings_grid.addWidget(key, row_index, 0)
+            settings_grid.addWidget(widget, row_index, 1)
+        inspector_layout.addLayout(settings_grid)
+
+        self.remove_background_check = QCheckBox("Remove image background")
+        self.auto_object_fx_check = QCheckBox("Auto object sound FX")
+        inspector_layout.addWidget(self.remove_background_check)
+        inspector_layout.addWidget(self.auto_object_fx_check)
         inspector_layout.addStretch(1)
         inspector_layout.addWidget(QPushButton("Reset scene"))
 
@@ -395,6 +435,39 @@ class StudioPage(QWidget):
         vertical.setStretchFactor(0, 1)
         vertical.setStretchFactor(1, 0)
         vertical.setSizes([600, 180])
+
+    @staticmethod
+    def _set_combo_data(combo: QComboBox, value: object) -> None:
+        index = combo.findData(value)
+        if index >= 0:
+            combo.setCurrentIndex(index)
+
+    def _set_render_controls_enabled(self, enabled: bool) -> None:
+        for widget in (
+            self.reveal_spin,
+            self.hold_spin,
+            self.render_style_combo,
+            self.visual_mode_combo,
+            self.brush_mode_combo,
+            self.hand_style_combo,
+            self.remove_background_check,
+            self.auto_object_fx_check,
+            self.object_timing_combo,
+        ):
+            widget.setEnabled(enabled)
+
+    def _load_render_controls(self, scene_id: str) -> None:
+        settings = self.store.get_scene_render_settings(scene_id)
+        self.reveal_spin.setValue(float(settings["reveal_duration"]))
+        self.hold_spin.setValue(float(settings["hold_duration"]))
+        self._set_combo_data(self.render_style_combo, settings["style"])
+        self._set_combo_data(self.visual_mode_combo, settings["visual_mode"])
+        self._set_combo_data(self.brush_mode_combo, settings["brush_mode"])
+        self._set_combo_data(self.hand_style_combo, settings["hand_style"])
+        self.remove_background_check.setChecked(bool(settings["remove_background_enabled"]))
+        self.auto_object_fx_check.setChecked(bool(settings["auto_object_fx_enabled"]))
+        self._set_combo_data(self.object_timing_combo, settings["object_timing_mode"])
+        self._set_render_controls_enabled(True)
 
     def _rebuild_timeline(self, scene_count: int) -> None:
         while self.timeline_track.count():
@@ -462,16 +535,19 @@ class StudioPage(QWidget):
         if current is None:
             self.scene_text_edit.clear()
             self.scene_text_edit.setEnabled(False)
+            self._set_render_controls_enabled(False)
             self._refresh_canvas_objects()
             return
         scene = self._scene_by_id(current.data(Qt.ItemDataRole.UserRole))
         if scene is None:
             self.scene_text_edit.clear()
             self.scene_text_edit.setEnabled(False)
+            self._set_render_controls_enabled(False)
             self._refresh_canvas_objects()
             return
         self.scene_text_edit.setEnabled(True)
         self.scene_text_edit.setPlainText(scene["text"])
+        self._load_render_controls(scene["id"])
         self._refresh_canvas_objects()
 
     def _refresh_canvas_objects(self, *, selected_object_id: str | None = None) -> None:
@@ -540,8 +616,9 @@ class StudioPage(QWidget):
             return
         scene_id = self._selected_scene_id()
         scene = self._scene_by_id(scene_id)
-        if scene is None:
+        if scene is None or not scene_id:
             return
+        render_settings = self.store.get_scene_render_settings(scene_id)
         duplicate_id = self.store.add_scene(
             self.project_id,
             f"{scene['text']} copy",
@@ -549,6 +626,18 @@ class StudioPage(QWidget):
             image_prompt=scene.get("image_prompt", ""),
             voice_text=scene.get("voice_text", ""),
             metadata=scene.get("metadata", {}),
+        )
+        copied_settings = {
+            key: value
+            for key, value in render_settings.items()
+            if key not in {"reveal_duration", "hold_duration", "extras"}
+        }
+        copied_settings.update(dict(render_settings.get("extras") or {}))
+        self.store.update_scene_render_settings(
+            duplicate_id,
+            reveal_duration=render_settings["reveal_duration"],
+            hold_duration=render_settings["hold_duration"],
+            settings=copied_settings,
         )
         for obj in self.store.list_visual_objects(scene_id):
             self.store.add_visual_object(
@@ -606,6 +695,20 @@ class StudioPage(QWidget):
             self.status_message.emit("Scene text cannot be empty")
             return
         self.store.update_scene(scene_id, text=text, voice_text=text)
+        self.store.update_scene_render_settings(
+            scene_id,
+            reveal_duration=self.reveal_spin.value(),
+            hold_duration=self.hold_spin.value(),
+            settings={
+                "style": self.render_style_combo.currentData(),
+                "visual_mode": self.visual_mode_combo.currentData(),
+                "brush_mode": self.brush_mode_combo.currentData(),
+                "hand_style": self.hand_style_combo.currentData(),
+                "remove_background_enabled": self.remove_background_check.isChecked(),
+                "auto_object_fx_enabled": self.auto_object_fx_check.isChecked(),
+                "object_timing_mode": self.object_timing_combo.currentData(),
+            },
+        )
         current_row = self.scenes.currentRow()
         self._refresh_scenes(selected_id=scene_id, fallback_row=current_row)
         self.status_message.emit("Scene saved")
