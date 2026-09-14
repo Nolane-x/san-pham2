@@ -5,8 +5,9 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
+from .effects import RenderProfile, build_image_filter_graph
 from .ffmpeg import SubprocessRunner
 
 
@@ -15,6 +16,10 @@ class ExportClip:
     path: str
     kind: str
     duration: float = 6.0
+    trim_start: float = 0.0
+    trim_end: float | None = None
+    speed: float = 1.0
+    render_profile: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         kind = self.kind.strip().lower()
@@ -22,6 +27,12 @@ class ExportClip:
             raise ValueError("kind must be image or video")
         if kind == "image" and self.duration <= 0:
             raise ValueError("image duration must be > 0")
+        if self.trim_start < 0:
+            raise ValueError("trim_start must be >= 0")
+        if self.trim_end is not None and self.trim_end <= self.trim_start:
+            raise ValueError("trim_end must be greater than trim_start")
+        if self.speed <= 0:
+            raise ValueError("speed must be > 0")
         object.__setattr__(self, "kind", kind)
 
 
@@ -49,6 +60,19 @@ def _video_filter(width: int, height: int, fps: int) -> str:
     )
 
 
+def _atempo_filter(speed: float) -> str:
+    speed = float(speed)
+    factors: list[float] = []
+    while speed > 2.0:
+        factors.append(2.0)
+        speed /= 2.0
+    while speed < 0.5:
+        factors.append(0.5)
+        speed /= 0.5
+    factors.append(speed)
+    return ",".join(f"atempo={factor:.6f}" for factor in factors)
+
+
 def build_image_segment_command(
     ffmpeg: str,
     source: str,
@@ -58,8 +82,11 @@ def build_image_segment_command(
     width: int = 1280,
     height: int = 720,
     fps: int = 24,
+    profile: RenderProfile | None = None,
 ) -> list[str]:
-    return [
+    if profile is not None:
+        duration = profile.total_duration
+    cmd = [
         ffmpeg,
         "-y",
         "-loop",
@@ -74,12 +101,19 @@ def build_image_segment_command(
         f"{float(duration):.6f}",
         "-i",
         "anullsrc=channel_layout=stereo:sample_rate=48000",
-        "-map",
-        "0:v:0",
-        "-map",
-        "1:a:0",
-        "-vf",
-        _video_filter(width, height, fps),
+    ]
+    if profile is None:
+        cmd += ["-map", "0:v:0", "-map", "1:a:0", "-vf", _video_filter(width, height, fps)]
+    else:
+        cmd += [
+            "-filter_complex",
+            build_image_filter_graph(width, height, fps, profile),
+            "-map",
+            "[outv]",
+            "-map",
+            "1:a:0",
+        ]
+    cmd += [
         "-c:v",
         "libx264",
         "-preset",
@@ -107,6 +141,7 @@ def build_image_segment_command(
         "+faststart",
         output,
     ]
+    return cmd
 
 
 def build_video_segment_command(
@@ -118,14 +153,35 @@ def build_video_segment_command(
     width: int = 1280,
     height: int = 720,
     fps: int = 24,
+    trim_start: float = 0.0,
+    trim_end: float | None = None,
+    speed: float = 1.0,
 ) -> list[str]:
-    cmd = [ffmpeg, "-y", "-i", source]
+    trim_start = float(trim_start)
+    speed = float(speed)
+    if trim_start < 0:
+        raise ValueError("trim_start must be >= 0")
+    if speed <= 0:
+        raise ValueError("speed must be > 0")
+    cmd = [ffmpeg, "-y"]
+    if trim_start:
+        cmd += ["-ss", f"{trim_start:.6f}"]
+    if trim_end is not None:
+        trim_end = float(trim_end)
+        if trim_end <= trim_start:
+            raise ValueError("trim_end must be greater than trim_start")
+        cmd += ["-t", f"{trim_end - trim_start:.6f}"]
+    cmd += ["-i", source]
     if not has_audio:
         cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
     cmd += ["-map", "0:v:0", "-map", "0:a:0?" if has_audio else "1:a:0"]
+    video_filter = _video_filter(width, height, fps)
+    if speed != 1.0:
+        video_filter += f",setpts=PTS/{speed:.6f}"
+    cmd += ["-vf", video_filter]
+    if has_audio and speed != 1.0:
+        cmd += ["-af", _atempo_filter(speed)]
     cmd += [
-        "-vf",
-        _video_filter(width, height, fps),
         "-c:v",
         "libx264",
         "-preset",
@@ -173,10 +229,11 @@ def _concat_escape(path: Path) -> str:
 
 
 class MediaExporter:
-    """Small, deterministic mixed image/video exporter for the desktop release.
+    """Deterministic low-memory image/video exporter.
 
-    Every source is normalized to the same A/V stream shape before concat so the
-    final operation is stable and does not require keeping decoded frames in RAM.
+    Sources are normalized sequentially to a common A/V shape before concat.
+    Trims, playback speed and authored image effects are applied during this
+    normalization step so the full timeline never needs to be decoded in RAM.
     """
 
     def __init__(
@@ -211,6 +268,7 @@ class MediaExporter:
             for index, clip in enumerate(clips):
                 segment = temp / f"segment-{index:04d}.mp4"
                 if clip.kind == "image":
+                    profile = RenderProfile(**dict(clip.render_profile)) if clip.render_profile else None
                     command = build_image_segment_command(
                         self.ffmpeg,
                         clip.path,
@@ -219,6 +277,7 @@ class MediaExporter:
                         width=width,
                         height=height,
                         fps=fps,
+                        profile=profile,
                     )
                 else:
                     command = build_video_segment_command(
@@ -229,6 +288,9 @@ class MediaExporter:
                         width=width,
                         height=height,
                         fps=fps,
+                        trim_start=clip.trim_start,
+                        trim_end=clip.trim_end,
+                        speed=clip.speed,
                     )
                 self.runner.run(command)
                 segments.append(segment)
