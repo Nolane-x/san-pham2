@@ -83,6 +83,12 @@ def validate_project_scene_media(plans: Sequence[SceneRenderPlan]) -> None:
             )
 
 
+def validate_project_scene_render_state(plans: Sequence[SceneRenderPlan]) -> None:
+    """Preflight unsupported persisted render state before any scene render starts."""
+    for plan in plans:
+        validate_supported_scene_render_state(plan)
+
+
 class ProjectExportStore(ScenePlanStore, Protocol):
     def load_timeline(self, project_id: str) -> dict[str, Any]: ...
 
@@ -154,13 +160,13 @@ class ProjectSceneExporter:
     with additional visible layers fail closed until their native timing and
     composition behavior is recovered; static/color-reveal scenes use a
     lossless snapshot plus the existing image profile. Every visible persisted
-    image/video source is preflighted across the whole project before any scene
-    renderer starts, so later missing media cannot leave a partially rendered
-    export. Persisted scene options that currently have no faithful renderer
-    also fail closed instead of being silently discarded. Temporary scene media
-    remains alive for the whole synchronous MediaExporter call. Persisted
-    timeline state is consumed only where recovered semantics are unambiguous;
-    unsupported track payloads fail closed instead of being silently dropped.
+    image/video source and every unsupported persisted render state are
+    preflighted across the whole project before any scene renderer starts, so
+    later invalid state cannot leave a partially rendered export. Temporary
+    scene media remains alive for the whole synchronous MediaExporter call.
+    Persisted timeline state is consumed only where recovered semantics are
+    unambiguous; unsupported track payloads fail closed instead of being
+    silently dropped.
     """
 
     def __init__(
@@ -191,6 +197,7 @@ class ProjectSceneExporter:
         if not plans:
             raise ValueError("project has no scenes to export")
         validate_project_scene_media(plans)
+        validate_project_scene_render_state(plans)
 
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -199,7 +206,6 @@ class ProjectSceneExporter:
             temp = Path(temp_raw)
             clips: list[ExportClip] = []
             for index, plan in enumerate(plans):
-                validate_supported_scene_render_state(plan)
                 has_video = any(
                     str(obj.get("kind", "")).strip().lower() == "video"
                     and bool(obj.get("visible", True))
