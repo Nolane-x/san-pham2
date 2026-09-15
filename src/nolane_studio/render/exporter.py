@@ -89,21 +89,22 @@ def build_image_segment_command(
     fps: int = 24,
     profile: RenderProfile | None = None,
 ) -> list[str]:
-    if profile is not None:
-        duration = profile.total_duration
+    duration = float(duration)
+    if duration <= 0:
+        raise ValueError("duration must be > 0")
     cmd = [
         ffmpeg,
         "-y",
         "-loop",
         "1",
         "-t",
-        f"{float(duration):.6f}",
+        f"{duration:.6f}",
         "-i",
         source,
         "-f",
         "lavfi",
         "-t",
-        f"{float(duration):.6f}",
+        f"{duration:.6f}",
         "-i",
         "anullsrc=channel_layout=stereo:sample_rate=48000",
     ]
@@ -112,7 +113,7 @@ def build_image_segment_command(
     else:
         cmd += [
             "-filter_complex",
-            build_image_filter_graph(width, height, fps, profile),
+            build_image_filter_graph(width, height, fps, profile, total_duration=duration),
             "-map",
             "[outv]",
             "-map",
@@ -181,18 +182,20 @@ def build_transition_segment_command(
     *,
     effect: str = "fade",
     duration: float = 0.5,
+    fps: int = 24,
 ) -> list[str]:
     duration = float(duration)
     if not 0.1 <= duration <= 10.0:
         raise ValueError("transition duration must be between 0.1 and 10 seconds")
+    fps = max(1, int(fps))
     effect = str(effect).strip().lower()
     allowed = {"fade", "wipeleft", "wiperight", "slideleft", "slideright", "smoothleft", "smoothright"}
     if effect not in allowed:
         effect = "fade"
     graph = (
-        f"[0:v]trim=duration=0.050000,setpts=PTS-STARTPTS,"
+        f"[0:v]trim=duration=0.050000,setpts=PTS-STARTPTS,fps={fps},"
         f"tpad=stop_mode=clone:stop_duration={duration:.6f}[left];"
-        f"[1:v]trim=duration=0.050000,setpts=PTS-STARTPTS,"
+        f"[1:v]trim=duration=0.050000,setpts=PTS-STARTPTS,fps={fps},"
         f"tpad=stop_mode=clone:stop_duration={duration:.6f}[right];"
         f"[left][right]xfade=transition={effect}:duration={duration:.6f}:offset=0[outv]"
     )
@@ -262,7 +265,7 @@ class MediaExporter:
         output = Path(output)
         output.parent.mkdir(parents=True, exist_ok=True)
         clip_ids = [clip.clip_id or str(index) for index, clip in enumerate(clips)]
-        build_transition_gaps(clip_ids, transitions)  # validates adjacency/duplicates
+        build_transition_gaps(clip_ids, transitions)
         transition_lookup = {(t.from_id, t.to_id): t for t in transitions}
 
         with tempfile.TemporaryDirectory(prefix="nolane-studio-export-") as temp_raw:
@@ -303,6 +306,7 @@ class MediaExporter:
                         str(trans_segment),
                         effect=transition.effect,
                         duration=transition.duration,
+                        fps=fps,
                     )
                 )
                 assembly.append(trans_segment)
