@@ -45,6 +45,12 @@ def validate_supported_scene_render_state(plan: SceneRenderPlan) -> None:
                 f"scene {plan.scene_id} uses unsupported persisted render state: {field}"
             )
 
+    hand_style = str(plan.render_config.get("hand_style", "hand-1.png") or "hand-1.png").strip()
+    if plan.profile.style == "whiteboard" and hand_style != "hand-1.png":
+        raise UnsupportedSceneRenderState(
+            f"scene {plan.scene_id} uses unsupported persisted render state: hand_style"
+        )
+
     if plan.render_config.get("custom_object_push_config"):
         raise UnsupportedSceneRenderState(
             f"scene {plan.scene_id} uses unsupported persisted render state: custom_object_push_config"
