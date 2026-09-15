@@ -89,6 +89,43 @@ def validate_project_scene_render_state(plans: Sequence[SceneRenderPlan]) -> Non
         validate_supported_scene_render_state(plan)
 
 
+def validate_persisted_timeline_state(
+    clip_ids: Sequence[str],
+    state: Mapping[str, Any] | None,
+) -> None:
+    """Reject persisted timeline semantics that cannot be exported faithfully."""
+    raw = dict(state or {})
+
+    for field, empty in (
+        ("clips", {}),
+        ("videoClips", []),
+        ("audioClips", []),
+    ):
+        value = raw.get(field, empty)
+        if value:
+            raise UnsupportedProjectTimeline(
+                f"{field} timeline payload is not yet recovered strongly enough for faithful export"
+            )
+
+    media_order = raw.get("mediaOrder", [])
+    if not media_order:
+        return
+    if not isinstance(media_order, list):
+        raise UnsupportedProjectTimeline("mediaOrder must be a list")
+
+    normalized_order = [str(item).strip() for item in media_order]
+    normalized_clip_ids = [str(clip_id) for clip_id in clip_ids]
+    if (
+        any(not item for item in normalized_order)
+        or len(normalized_order) != len(normalized_clip_ids)
+        or len(set(normalized_order)) != len(normalized_order)
+        or set(normalized_order) != set(normalized_clip_ids)
+    ):
+        raise UnsupportedProjectTimeline(
+            "mediaOrder must be an exact permutation of rendered scene clip ids"
+        )
+
+
 class ProjectExportStore(ScenePlanStore, Protocol):
     def load_timeline(self, project_id: str) -> dict[str, Any]: ...
 
@@ -117,36 +154,14 @@ def apply_persisted_timeline_state(
     """
     ordered = list(clips)
     raw = dict(state or {})
-
-    for field, empty in (
-        ("clips", {}),
-        ("videoClips", []),
-        ("audioClips", []),
-    ):
-        value = raw.get(field, empty)
-        if value:
-            raise UnsupportedProjectTimeline(
-                f"{field} timeline payload is not yet recovered strongly enough for faithful export"
-            )
+    clip_ids = [clip.clip_id for clip in ordered]
+    validate_persisted_timeline_state(clip_ids, raw)
 
     media_order = raw.get("mediaOrder", [])
     if not media_order:
         return ordered
-    if not isinstance(media_order, list):
-        raise UnsupportedProjectTimeline("mediaOrder must be a list")
 
     normalized_order = [str(item).strip() for item in media_order]
-    clip_ids = [clip.clip_id for clip in ordered]
-    if (
-        any(not item for item in normalized_order)
-        or len(normalized_order) != len(clip_ids)
-        or len(set(normalized_order)) != len(normalized_order)
-        or set(normalized_order) != set(clip_ids)
-    ):
-        raise UnsupportedProjectTimeline(
-            "mediaOrder must be an exact permutation of rendered scene clip ids"
-        )
-
     clips_by_id = {clip.clip_id: clip for clip in ordered}
     return [clips_by_id[clip_id] for clip_id in normalized_order]
 
@@ -160,13 +175,12 @@ class ProjectSceneExporter:
     with additional visible layers fail closed until their native timing and
     composition behavior is recovered; static/color-reveal scenes use a
     lossless snapshot plus the existing image profile. Every visible persisted
-    image/video source and every unsupported persisted render state are
-    preflighted across the whole project before any scene renderer starts, so
-    later invalid state cannot leave a partially rendered export. Temporary
-    scene media remains alive for the whole synchronous MediaExporter call.
-    Persisted timeline state is consumed only where recovered semantics are
-    unambiguous; unsupported track payloads fail closed instead of being
-    silently dropped.
+    image/video source, unsupported persisted render state, and unsupported or
+    ambiguous persisted timeline state is preflighted across the whole project
+    before any scene renderer starts, so later invalid state cannot leave a
+    partially rendered export. Temporary scene media remains alive for the
+    whole synchronous MediaExporter call. Persisted timeline ordering is
+    consumed only where recovered semantics are unambiguous.
     """
 
     def __init__(
@@ -198,6 +212,11 @@ class ProjectSceneExporter:
             raise ValueError("project has no scenes to export")
         validate_project_scene_media(plans)
         validate_project_scene_render_state(plans)
+        timeline_state = self.store.load_timeline(project_id)
+        validate_persisted_timeline_state(
+            [plan.scene_id for plan in plans],
+            timeline_state,
+        )
 
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -283,10 +302,7 @@ class ProjectSceneExporter:
                     )
                 )
 
-            clips = apply_persisted_timeline_state(
-                clips,
-                self.store.load_timeline(project_id),
-            )
+            clips = apply_persisted_timeline_state(clips, timeline_state)
             return Path(
                 self.media_exporter.export(
                     clips,
