@@ -89,6 +89,25 @@ def validate_project_scene_render_state(plans: Sequence[SceneRenderPlan]) -> Non
         validate_supported_scene_render_state(plan)
 
 
+def validate_project_scene_composition(plans: Sequence[SceneRenderPlan]) -> None:
+    """Preflight scene compositions that no current renderer can preserve faithfully."""
+    for plan in plans:
+        has_video = any(
+            str(obj.get("kind", "")).strip().lower() == "video"
+            and bool(obj.get("visible", True))
+            for obj in plan.objects
+        )
+        has_non_video = any(
+            str(obj.get("kind", "")).strip().lower() != "video"
+            and bool(obj.get("visible", True))
+            for obj in plan.objects
+        )
+        if has_video and has_non_video and plan.profile.style == "whiteboard":
+            raise UnsupportedWhiteboardMotion(
+                "whiteboard source-video composition is not yet supported"
+            )
+
+
 def validate_persisted_timeline_state(
     clip_ids: Sequence[str],
     state: Mapping[str, Any] | None,
@@ -175,12 +194,13 @@ class ProjectSceneExporter:
     with additional visible layers fail closed until their native timing and
     composition behavior is recovered; static/color-reveal scenes use a
     lossless snapshot plus the existing image profile. Every visible persisted
-    image/video source, unsupported persisted render state, and unsupported or
-    ambiguous persisted timeline state is preflighted across the whole project
-    before any scene renderer starts, so later invalid state cannot leave a
-    partially rendered export. Temporary scene media remains alive for the
-    whole synchronous MediaExporter call. Persisted timeline ordering is
-    consumed only where recovered semantics are unambiguous.
+    image/video source, unsupported persisted render state, unsupported scene
+    composition, and unsupported or ambiguous persisted timeline state is
+    preflighted across the whole project before any scene renderer starts, so
+    later invalid state cannot leave a partially rendered export. Temporary
+    scene media remains alive for the whole synchronous MediaExporter call.
+    Persisted timeline ordering is consumed only where recovered semantics are
+    unambiguous.
     """
 
     def __init__(
@@ -212,6 +232,7 @@ class ProjectSceneExporter:
             raise ValueError("project has no scenes to export")
         validate_project_scene_media(plans)
         validate_project_scene_render_state(plans)
+        validate_project_scene_composition(plans)
         timeline_state = self.store.load_timeline(project_id)
         validate_persisted_timeline_state(
             [plan.scene_id for plan in plans],
@@ -230,15 +251,6 @@ class ProjectSceneExporter:
                     and bool(obj.get("visible", True))
                     for obj in plan.objects
                 )
-                has_non_video = any(
-                    str(obj.get("kind", "")).strip().lower() != "video"
-                    and bool(obj.get("visible", True))
-                    for obj in plan.objects
-                )
-                if has_video and has_non_video and plan.profile.style == "whiteboard":
-                    raise UnsupportedWhiteboardMotion(
-                        "whiteboard source-video composition is not yet supported"
-                    )
                 if has_video:
                     scene_video = temp / f"scene-{index:04d}-{plan.scene_id}.mp4"
                     rendered_video = Path(
