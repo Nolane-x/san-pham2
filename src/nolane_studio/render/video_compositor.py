@@ -38,6 +38,19 @@ def _visible_objects(plan: SceneRenderPlan) -> list[dict[str, object]]:
     )
 
 
+def validate_supported_video_composition(plan: SceneRenderPlan) -> None:
+    """Reject video-layer topology the current compositor cannot preserve faithfully."""
+    video_count = sum(
+        1
+        for obj in _visible_objects(plan)
+        if str(obj.get("kind", "")).strip().lower() == "video"
+    )
+    if video_count == 0:
+        raise UnsupportedVideoComposition("scene does not contain a video layer")
+    if video_count > 1:
+        raise UnsupportedVideoComposition("multiple video layers are not yet supported")
+
+
 def _rotation_layout(
     x: float,
     y: float,
@@ -103,18 +116,13 @@ class SceneVideoCompositor:
         height: int = 720,
         fps: int = 24,
     ) -> Path:
+        validate_supported_video_composition(plan)
         ordered = _visible_objects(plan)
-        video_indexes = [
+        video_index = next(
             index
             for index, obj in enumerate(ordered)
             if str(obj.get("kind", "")).strip().lower() == "video"
-        ]
-        if not video_indexes:
-            raise UnsupportedVideoComposition("scene does not contain a video layer")
-        if len(video_indexes) > 1:
-            raise UnsupportedVideoComposition("multiple video layers are not yet supported")
-
-        video_index = video_indexes[0]
+        )
         video: Mapping[str, object] = ordered[video_index]
         source = Path(str(video.get("source") or ""))
         if not source.is_file():
