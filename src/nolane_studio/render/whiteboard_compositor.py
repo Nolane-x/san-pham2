@@ -186,6 +186,20 @@ def _brush_transition(brush_mode: str) -> str:
     raise UnsupportedWhiteboardMotion(f"unsupported whiteboard brush mode: {mode}")
 
 
+def validate_supported_whiteboard_motion(plan: SceneRenderPlan) -> None:
+    """Validate only whiteboard motion phases that would actually execute."""
+    if plan.profile.style != "whiteboard":
+        return
+
+    epsilon = 1e-9
+    if any(entry.draw > epsilon for entry in plan.object_timing):
+        _brush_transition(str(plan.render_config.get("brush_mode", "lr") or "lr"))
+    if any(entry.push > epsilon for entry in plan.object_timing):
+        _push_direction(plan)
+    if _outro_duration(plan) > epsilon:
+        _outro_direction(plan)
+
+
 def build_object_reveal_command(
     ffmpeg: str,
     before: str,
@@ -540,6 +554,7 @@ class WhiteboardSceneCompositor:
         height: int = 720,
         fps: int = 24,
     ) -> Path:
+        validate_supported_whiteboard_motion(plan)
         segments = build_whiteboard_segments(plan)
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
