@@ -26,6 +26,13 @@ def _number(value: object, default: float) -> float:
         return float(default)
 
 
+def _finite_video_rotation(value: object) -> float:
+    rotation = _number(value, 0.0)
+    if not math.isfinite(rotation):
+        raise UnsupportedVideoComposition("video rotation must be finite")
+    return rotation
+
+
 def _even(value: object, default: int) -> int:
     number = max(2, int(round(_number(value, default))))
     return number if number % 2 == 0 else number - 1
@@ -40,15 +47,16 @@ def _visible_objects(plan: SceneRenderPlan) -> list[dict[str, object]]:
 
 def validate_supported_video_composition(plan: SceneRenderPlan) -> None:
     """Reject video-layer topology the current compositor cannot preserve faithfully."""
-    video_count = sum(
-        1
+    videos = [
+        obj
         for obj in _visible_objects(plan)
         if str(obj.get("kind", "")).strip().lower() == "video"
-    )
-    if video_count == 0:
+    ]
+    if not videos:
         raise UnsupportedVideoComposition("scene does not contain a video layer")
-    if video_count > 1:
+    if len(videos) > 1:
         raise UnsupportedVideoComposition("multiple video layers are not yet supported")
+    _finite_video_rotation(videos[0].get("rotation"))
 
 
 def _rotation_layout(
@@ -65,10 +73,7 @@ def _rotation_layout(
     used, so the expanded bounding box must be shifted by the minimum extents
     of the same rectangle rotated around the origin before overlaying it.
     """
-    if not math.isfinite(rotation_degrees):
-        raise UnsupportedVideoComposition("video rotation must be finite")
-
-    normalized = math.fmod(rotation_degrees, 360.0)
+    normalized = math.fmod(_finite_video_rotation(rotation_degrees), 360.0)
     if abs(normalized) <= 1e-9:
         return None
 
