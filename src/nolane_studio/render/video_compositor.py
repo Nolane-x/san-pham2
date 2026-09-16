@@ -26,11 +26,15 @@ def _number(value: object, default: float) -> float:
         return float(default)
 
 
+def _finite_video_number(value: object, default: float, field: str) -> float:
+    number = _number(value, default)
+    if not math.isfinite(number):
+        raise UnsupportedVideoComposition(f"video {field} must be finite")
+    return number
+
+
 def _finite_video_rotation(value: object) -> float:
-    rotation = _number(value, 0.0)
-    if not math.isfinite(rotation):
-        raise UnsupportedVideoComposition("video rotation must be finite")
-    return rotation
+    return _finite_video_number(value, 0.0, "rotation")
 
 
 def _even(value: object, default: int) -> int:
@@ -56,7 +60,16 @@ def validate_supported_video_composition(plan: SceneRenderPlan) -> None:
         raise UnsupportedVideoComposition("scene does not contain a video layer")
     if len(videos) > 1:
         raise UnsupportedVideoComposition("multiple video layers are not yet supported")
-    _finite_video_rotation(videos[0].get("rotation"))
+
+    video = videos[0]
+    for field, default in (
+        ("x", 0.0),
+        ("y", 0.0),
+        ("width", 640.0),
+        ("height", 360.0),
+    ):
+        _finite_video_number(video.get(field), default, field)
+    _finite_video_rotation(video.get("rotation"))
 
 
 def _rotation_layout(
