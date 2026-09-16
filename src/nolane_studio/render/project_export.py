@@ -7,7 +7,7 @@ from typing import Any, Callable, Mapping, Protocol, Sequence
 from .compositor import render_scene_snapshot
 from .exporter import ExportClip, MediaExporter
 from .scene_plan import ScenePlanStore, SceneRenderPlan, build_scene_render_plan
-from .video_compositor import SceneVideoCompositor
+from .video_compositor import SceneVideoCompositor, validate_supported_video_composition
 from .whiteboard_compositor import (
     UnsupportedWhiteboardMotion,
     WhiteboardSceneCompositor,
@@ -100,7 +100,7 @@ def validate_project_scene_render_state(plans: Sequence[SceneRenderPlan]) -> Non
 
 
 def validate_project_scene_composition(plans: Sequence[SceneRenderPlan]) -> None:
-    """Preflight scene compositions and whiteboard motion before any renderer starts."""
+    """Preflight scene compositions and recovered motion before any renderer starts."""
     for plan in plans:
         has_video = any(
             str(obj.get("kind", "")).strip().lower() == "video"
@@ -116,6 +116,8 @@ def validate_project_scene_composition(plans: Sequence[SceneRenderPlan]) -> None
             raise UnsupportedWhiteboardMotion(
                 "whiteboard source-video composition is not yet supported"
             )
+        if has_video:
+            validate_supported_video_composition(plan)
         validate_supported_whiteboard_motion(plan)
 
 
@@ -206,12 +208,12 @@ class ProjectSceneExporter:
     composition behavior is recovered; static/color-reveal scenes use a
     lossless snapshot plus the existing image profile. Every visible persisted
     image/video source, unsupported persisted render state, unsupported scene
-    composition, unsupported whiteboard motion, and unsupported or ambiguous
-    persisted timeline state is preflighted across the whole project before any
-    scene renderer starts, so later invalid state cannot leave a partially
-    rendered export. Temporary scene media remains alive for the whole
-    synchronous MediaExporter call. Persisted timeline ordering is consumed only
-    where recovered semantics are unambiguous.
+    composition, unsupported whiteboard/video motion topology, and unsupported
+    or ambiguous persisted timeline state is preflighted across the whole
+    project before any scene renderer starts, so later invalid state cannot
+    leave a partially rendered export. Temporary scene media remains alive for
+    the whole synchronous MediaExporter call. Persisted timeline ordering is
+    consumed only where recovered semantics are unambiguous.
     """
 
     def __init__(
