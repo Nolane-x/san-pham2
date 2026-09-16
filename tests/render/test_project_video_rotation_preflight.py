@@ -5,8 +5,14 @@ from pathlib import Path
 import pytest
 
 from nolane_studio.domain import Scene
+from nolane_studio.render.effects import RenderProfile
 from nolane_studio.render.project_export import ProjectSceneExporter
-from nolane_studio.render.video_compositor import SceneVideoCompositor, UnsupportedVideoComposition
+from nolane_studio.render.scene_plan import SceneRenderPlan
+from nolane_studio.render.video_compositor import (
+    SceneVideoCompositor,
+    UnsupportedVideoComposition,
+    validate_supported_video_composition,
+)
 from nolane_studio.storage.store import ProjectStore
 
 
@@ -30,6 +36,39 @@ class FakeRunner:
         output = Path(command[-1])
         output.parent.mkdir(parents=True, exist_ok=True)
         output.touch()
+
+
+def _video_plan(rotation: float) -> SceneRenderPlan:
+    return SceneRenderPlan(
+        scene_id="scene-video",
+        position=0,
+        text="Video scene",
+        objects=(
+            {
+                "id": "video",
+                "kind": "video",
+                "source": "source.mp4",
+                "rotation": rotation,
+                "z_index": 0,
+                "visible": True,
+            },
+        ),
+        profile=RenderProfile(style="static", reveal_duration=0.0, hold_duration=1.0),
+        object_timing=(),
+        total_duration=1.0,
+        media_sources=("source.mp4",),
+    )
+
+
+@pytest.mark.parametrize("rotation", [0.0, 90.0, -45.5, 1e300])
+def test_video_rotation_preflight_accepts_finite_rotations(rotation):
+    validate_supported_video_composition(_video_plan(rotation))
+
+
+@pytest.mark.parametrize("rotation", [float("inf"), float("-inf")])
+def test_video_rotation_preflight_rejects_nonfinite_rotations(rotation):
+    with pytest.raises(UnsupportedVideoComposition, match=r"^video rotation must be finite$"):
+        validate_supported_video_composition(_video_plan(rotation))
 
 
 def test_project_exporter_preflights_later_nonfinite_video_rotation_before_any_render(tmp_path):
