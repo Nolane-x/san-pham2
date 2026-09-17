@@ -130,8 +130,7 @@ def test_video_segment_command_rejects_nonfinite_controls(field, value):
         )
 
 
-@pytest.mark.parametrize("literal", ["inf", "-inf", "nan"])
-def test_atempo_filter_rejects_nonfinite_speed_without_hanging(literal):
+def _run_atempo_probe(literal: str, expected_message: str) -> None:
     code = (
         "from nolane_studio.render.exporter import _atempo_filter\n"
         f"value = float({literal!r})\n"
@@ -151,10 +150,20 @@ def test_atempo_filter_rejects_nonfinite_speed_without_hanging(literal):
             check=False,
         )
     except subprocess.TimeoutExpired:
-        pytest.fail("_atempo_filter did not return for non-finite speed")
+        pytest.fail("_atempo_filter did not return for invalid speed")
 
     assert result.returncode == 0
-    assert result.stdout.strip() == "speed must be finite"
+    assert result.stdout.strip() == expected_message
+
+
+@pytest.mark.parametrize("literal", ["inf", "-inf", "nan"])
+def test_atempo_filter_rejects_nonfinite_speed_without_hanging(literal):
+    _run_atempo_probe(literal, "speed must be finite")
+
+
+@pytest.mark.parametrize("literal", ["0.0", "-1.0"])
+def test_atempo_filter_rejects_nonpositive_speed_without_hanging(literal):
+    _run_atempo_probe(literal, "speed must be > 0")
 
 
 @pytest.mark.parametrize("value", NONFINITE)
