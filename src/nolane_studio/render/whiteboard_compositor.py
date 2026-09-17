@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from .compositor import CompositionError, render_scene_layer_snapshot
-from .effects import build_camera_filter_chain
+from .effects import build_camera_filter_chain, normalize_ffmpeg_render_geometry
 from .exporter import build_image_segment_command, resolve_ffmpeg_exe
 from .ffmpeg import SubprocessRunner
 from .scene_plan import SceneRenderPlan
@@ -167,16 +167,11 @@ def build_whiteboard_segments(plan: SceneRenderPlan) -> list[WhiteboardSegment]:
 
 
 def _normalize(width: int, height: int, fps: int) -> str:
-    width = max(2, int(width))
-    height = max(2, int(height))
-    if width % 2:
-        width -= 1
-    if height % 2:
-        height -= 1
+    width, height, fps = normalize_ffmpeg_render_geometry(width, height, fps)
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=white,"
-        f"fps={max(1, int(fps))},setsar=1"
+        f"fps={fps},setsar=1"
     )
 
 
@@ -220,7 +215,7 @@ def build_object_reveal_command(
         raise ValueError("reveal duration must be finite")
     if duration <= 0:
         raise ValueError("reveal duration must be > 0")
-    fps = max(1, int(fps))
+    width, height, fps = normalize_ffmpeg_render_geometry(width, height, fps)
     transition = _brush_transition(brush_mode)
     normalization = _normalize(width, height, fps)
     graph = (
@@ -318,13 +313,7 @@ def build_object_push_command(
     if direction != "from_left":
         raise UnsupportedWhiteboardMotion(f"unsupported whiteboard push direction: {direction}")
 
-    width = max(2, int(width))
-    height = max(2, int(height))
-    if width % 2:
-        width -= 1
-    if height % 2:
-        height -= 1
-    fps = max(1, int(fps))
+    width, height, fps = normalize_ffmpeg_render_geometry(width, height, fps)
     normalization = _normalize(width, height, fps)
     x_expression = f"-{width}+{width}*min(t/{duration:.6f},1)"
     graph = (
@@ -411,13 +400,7 @@ def build_scene_outro_command(
     if direction != "left":
         raise UnsupportedWhiteboardMotion(f"unsupported whiteboard outro direction: {direction}")
 
-    width = max(2, int(width))
-    height = max(2, int(height))
-    if width % 2:
-        width -= 1
-    if height % 2:
-        height -= 1
-    fps = max(1, int(fps))
+    width, height, fps = normalize_ffmpeg_render_geometry(width, height, fps)
     normalization = _normalize(width, height, fps)
     x_expression = f"-{width}*min(t/{duration:.6f},1)"
     graph = (
