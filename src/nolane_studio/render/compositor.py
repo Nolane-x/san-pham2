@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -12,6 +13,16 @@ class CompositionError(RuntimeError):
 
 class CompositionRequiresVideo(CompositionError):
     """Raised when a scene needs the source-video compositor path."""
+
+
+_STATIC_VISUAL_KINDS = frozenset({"shape", "text", "image", "drawing"})
+_STATIC_GEOMETRY_DEFAULTS = (
+    ("x", 0.0),
+    ("y", 0.0),
+    ("width", 320.0),
+    ("height", 180.0),
+    ("rotation", 0.0),
+)
 
 
 def _float(value: Any, default: float) -> float:
@@ -30,6 +41,27 @@ def _ordered_visible(objects: Sequence[Mapping[str, Any]]) -> list[dict[str, Any
         (dict(obj) for obj in objects if bool(obj.get("visible", True))),
         key=lambda obj: (int(obj.get("z_index", 0)), str(obj.get("id", ""))),
     )
+
+
+def validate_supported_static_visual_geometry(
+    plan: SceneRenderPlan,
+    *,
+    objects: Sequence[Mapping[str, Any]] | None = None,
+) -> None:
+    """Reject non-finite visible static-object geometry before rasterization."""
+    candidates = plan.objects if objects is None else objects
+    for raw in candidates:
+        if not bool(raw.get("visible", True)):
+            continue
+        kind = str(raw.get("kind", "")).strip().lower()
+        if kind not in _STATIC_VISUAL_KINDS:
+            continue
+        object_id = str(raw.get("id", "")).strip()
+        for field, default in _STATIC_GEOMETRY_DEFAULTS:
+            if not math.isfinite(_float(raw.get(field), default)):
+                raise CompositionError(
+                    f"scene {plan.scene_id} object {object_id} {field} must be finite"
+                )
 
 
 def render_scene_layer_snapshot(
@@ -56,6 +88,7 @@ def render_scene_layer_snapshot(
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     ordered = _ordered_visible(objects)
+    validate_supported_static_visual_geometry(plan, objects=ordered)
 
     video_ids = [
         str(obj.get("id", ""))
@@ -82,7 +115,7 @@ def render_scene_layer_snapshot(
     try:
         for obj in ordered:
             kind = str(obj.get("kind", "")).strip().lower()
-            if kind not in {"shape", "text", "image", "drawing"}:
+            if kind not in _STATIC_VISUAL_KINDS:
                 raise CompositionError(
                     f"scene {plan.scene_id} contains unsupported visual object kind {kind!r}"
                 )
