@@ -5,6 +5,7 @@ from typing import Any, Mapping, Protocol
 
 from .config import normalize_render_config
 from .effects import (
+    InvalidObjectTiming,
     ObjectTimingEntry,
     RenderProfile,
     build_render_timing_plan,
@@ -64,7 +65,10 @@ def build_scene_render_plan(store: ScenePlanStore, project_id: str) -> list[Scen
             for obj in store.list_visual_objects(scene_id)
             if bool(obj.get("visible", True))
         )
-        timing = tuple(build_render_timing_plan(objects, render_config))
+        try:
+            timing = tuple(build_render_timing_plan(objects, render_config))
+        except InvalidObjectTiming as exc:
+            raise InvalidObjectTiming(f"scene {scene_id} {exc}") from exc
         outro = _outro_seconds(render_config)
 
         if timing:
