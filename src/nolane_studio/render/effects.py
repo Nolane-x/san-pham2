@@ -109,6 +109,39 @@ def _finite_nonnegative_seconds(
     return max(0.0, number)
 
 
+def _finite_int(value: Any, *, field: str) -> int:
+    if isinstance(value, int):
+        return int(value)
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return int(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{field} must be finite")
+    return int(value)
+
+
+def normalize_ffmpeg_fps(fps: int) -> int:
+    normalized = _finite_int(fps, field="fps")
+    if normalized < 1:
+        raise ValueError("fps must be >= 1")
+    return normalized
+
+
+def normalize_ffmpeg_render_geometry(
+    width: int,
+    height: int,
+    fps: int,
+) -> tuple[int, int, int]:
+    width = max(2, _finite_int(width, field="width"))
+    height = max(2, _finite_int(height, field="height"))
+    if width % 2:
+        width -= 1
+    if height % 2:
+        height -= 1
+    return width, height, normalize_ffmpeg_fps(fps)
+
+
 def _timing_value(raw: Mapping[str, Any], name: str, default: float) -> float:
     for key in (name, f"{name}_seconds", f"{name}_duration"):
         if key in raw:
@@ -226,16 +259,11 @@ def estimate_object_timeline_seconds(
 
 
 def _normalization(width: int, height: int, fps: int) -> str:
-    width = max(2, int(width))
-    height = max(2, int(height))
-    if width % 2:
-        width -= 1
-    if height % 2:
-        height -= 1
+    width, height, fps = normalize_ffmpeg_render_geometry(width, height, fps)
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=white,"
-        f"fps={int(fps)},setsar=1"
+        f"fps={fps},setsar=1"
     )
 
 
@@ -261,13 +289,7 @@ def _camera_filter(width: int, height: int, fps: int, camera: str) -> str:
 
 def build_camera_filter_chain(width: int, height: int, fps: int, camera: str) -> str:
     """Return the shared normalization + recovered camera-motion filter chain."""
-    width = max(2, int(width))
-    height = max(2, int(height))
-    if width % 2:
-        width -= 1
-    if height % 2:
-        height -= 1
-    fps = max(1, int(fps))
+    width, height, fps = normalize_ffmpeg_render_geometry(width, height, fps)
     camera = str(camera).strip().lower().replace("-", "_")
     if camera not in {"static", "slow_zoom", "pan_left", "pan_right"}:
         raise ValueError("camera must be static, slow_zoom, pan_left, or pan_right")
@@ -289,13 +311,7 @@ def build_image_filter_graph(
     profile while preserving the existing profile-only behavior for callers
     that do not have a scene timeline.
     """
-    width = max(2, int(width))
-    height = max(2, int(height))
-    if width % 2:
-        width -= 1
-    if height % 2:
-        height -= 1
-    fps = max(1, int(fps))
+    width, height, fps = normalize_ffmpeg_render_geometry(width, height, fps)
     total = profile.total_duration if total_duration is None else float(total_duration)
     if not math.isfinite(total):
         raise ValueError("total_duration must be finite")
