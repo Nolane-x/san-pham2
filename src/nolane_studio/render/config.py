@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Mapping
 
 _KNOWN = {
@@ -13,12 +14,25 @@ _KNOWN = {
 }
 
 
-def _float(value: Any, default: float, low: float, high: float) -> float:
+class InvalidSceneDuration(ValueError):
+    """Raised when persisted scene timing cannot form a finite duration."""
+
+
+def _float(
+    value: Any,
+    default: float,
+    low: float,
+    high: float,
+    *,
+    field: str,
+) -> float:
     try:
-        value = float(value)
+        number = float(value)
     except (TypeError, ValueError):
-        value = default
-    return max(low, min(high, value))
+        number = float(default)
+    if not math.isfinite(number):
+        raise InvalidSceneDuration(f"{field} must be finite")
+    return max(low, min(high, number))
 
 
 def _truthy(value: Any) -> bool:
@@ -39,8 +53,20 @@ def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
     config = {
         "style": style,
         "visual_mode": visual_mode,
-        "reveal_duration": _float(incoming.get("reveal_duration", 8.0), 8.0, 0.0, 3600.0),
-        "hold_duration": _float(incoming.get("hold_duration", 1.0), 1.0, 0.0, 3600.0),
+        "reveal_duration": _float(
+            incoming.get("reveal_duration", 8.0),
+            8.0,
+            0.0,
+            3600.0,
+            field="reveal_duration",
+        ),
+        "hold_duration": _float(
+            incoming.get("hold_duration", 1.0),
+            1.0,
+            0.0,
+            3600.0,
+            field="hold_duration",
+        ),
         "brush_mode": str(incoming.get("brush_mode", "lr") or "lr"),
         "custom_draw_points": list(incoming.get("custom_draw_points") or []),
         "large_object_push_enabled": _truthy(incoming.get("large_object_push_enabled", False)),
@@ -55,7 +81,13 @@ def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         "custom_object_timing_config": list(incoming.get("custom_object_timing_config") or []),
         "outro_enabled": _truthy(incoming.get("outro_enabled", False)),
         "outro_direction": str(incoming.get("outro_direction", "left") or "left"),
-        "outro_duration": _float(incoming.get("outro_duration", 0.3), 0.3, 0.0, 5.0),
+        "outro_duration": _float(
+            incoming.get("outro_duration", 0.3),
+            0.3,
+            0.0,
+            5.0,
+            field="outro_duration",
+        ),
         "hand_style": str(incoming.get("hand_style", "hand-1.png") or "hand-1.png"),
         "remove_background_enabled": _truthy(incoming.get("remove_background_enabled", False)),
         "auto_object_fx_enabled": _truthy(incoming.get("auto_object_fx_enabled", False)),
