@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import shutil
 import subprocess
 import tempfile
@@ -29,6 +30,8 @@ class ExportClip:
         kind = self.kind.strip().lower()
         if kind not in {"image", "video"}:
             raise ValueError("kind must be image or video")
+        if kind == "image" and not math.isfinite(self.duration):
+            raise ValueError("image duration must be finite")
         if kind == "image" and self.duration <= 0:
             raise ValueError("image duration must be > 0")
         if self.trim_start < 0:
@@ -90,6 +93,8 @@ def build_image_segment_command(
     profile: RenderProfile | None = None,
 ) -> list[str]:
     duration = float(duration)
+    if not math.isfinite(duration):
+        raise ValueError("duration must be finite")
     if duration <= 0:
         raise ValueError("duration must be > 0")
     cmd = [
