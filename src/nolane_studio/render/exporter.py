@@ -34,6 +34,13 @@ class ExportClip:
             raise ValueError("image duration must be finite")
         if kind == "image" and self.duration <= 0:
             raise ValueError("image duration must be > 0")
+        if kind == "video":
+            if not math.isfinite(self.trim_start):
+                raise ValueError("trim_start must be finite")
+            if self.trim_end is not None and not math.isfinite(self.trim_end):
+                raise ValueError("trim_end must be finite")
+            if not math.isfinite(self.speed):
+                raise ValueError("speed must be finite")
         if self.trim_start < 0:
             raise ValueError("trim_start must be >= 0")
         if self.trim_end is not None and self.trim_end <= self.trim_start:
@@ -70,6 +77,10 @@ def _video_filter(width: int, height: int, fps: int) -> str:
 
 def _atempo_filter(speed: float) -> str:
     speed = float(speed)
+    if not math.isfinite(speed):
+        raise ValueError("speed must be finite")
+    if speed <= 0:
+        raise ValueError("speed must be > 0")
     factors: list[float] = []
     while speed > 2.0:
         factors.append(2.0)
@@ -148,6 +159,10 @@ def build_video_segment_command(
 ) -> list[str]:
     trim_start = float(trim_start)
     speed = float(speed)
+    if not math.isfinite(trim_start):
+        raise ValueError("trim_start must be finite")
+    if not math.isfinite(speed):
+        raise ValueError("speed must be finite")
     if trim_start < 0:
         raise ValueError("trim_start must be >= 0")
     if speed <= 0:
@@ -157,6 +172,8 @@ def build_video_segment_command(
         cmd += ["-ss", f"{trim_start:.6f}"]
     if trim_end is not None:
         trim_end = float(trim_end)
+        if not math.isfinite(trim_end):
+            raise ValueError("trim_end must be finite")
         if trim_end <= trim_start:
             raise ValueError("trim_end must be greater than trim_start")
         cmd += ["-t", f"{trim_end - trim_start:.6f}"]
