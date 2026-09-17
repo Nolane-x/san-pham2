@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from .config import normalize_render_config
+from .config import InvalidSceneDuration, normalize_render_config
 
 
 class InvalidObjectTiming(ValueError):
@@ -27,7 +27,13 @@ class RenderProfile:
             raise ValueError("camera must be static, slow_zoom, pan_left, or pan_right")
         reveal = float(self.reveal_duration)
         hold = float(self.hold_duration)
-        if reveal < 0 or hold < 0 or reveal + hold <= 0:
+        for field, value in (("reveal_duration", reveal), ("hold_duration", hold)):
+            if not math.isfinite(value):
+                raise InvalidSceneDuration(f"render profile {field} must be finite")
+        total = reveal + hold
+        if not math.isfinite(total):
+            raise InvalidSceneDuration("render profile total duration must be finite")
+        if reveal < 0 or hold < 0 or total <= 0:
             raise ValueError("render profile requires a positive total duration")
         object.__setattr__(self, "style", style)
         object.__setattr__(self, "camera", camera)
@@ -85,6 +91,21 @@ def _nonnegative_seconds(value: Any, default: float = 0.0) -> float:
         number = float(value)
     except (TypeError, ValueError):
         number = float(default)
+    return max(0.0, number)
+
+
+def _finite_nonnegative_seconds(
+    value: Any,
+    *,
+    field: str,
+    default: float = 0.0,
+) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = float(default)
+    if not math.isfinite(number):
+        raise InvalidSceneDuration(f"{field} must be finite")
     return max(0.0, number)
 
 
@@ -196,7 +217,12 @@ def estimate_object_timeline_seconds(
     outro_duration: float = 0.0,
 ) -> float:
     object_end = max((entry.end for entry in plan), default=0.0)
-    return object_end + _nonnegative_seconds(hold_duration) + _nonnegative_seconds(outro_duration)
+    hold = _finite_nonnegative_seconds(hold_duration, field="hold_duration")
+    outro = _finite_nonnegative_seconds(outro_duration, field="outro_duration")
+    total = object_end + hold + outro
+    if not math.isfinite(total):
+        raise InvalidSceneDuration("scene timeline total duration must be finite")
+    return total
 
 
 def _normalization(width: int, height: int, fps: int) -> str:
