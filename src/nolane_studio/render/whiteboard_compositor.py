@@ -64,7 +64,7 @@ def _outro_direction(plan: SceneRenderPlan) -> str:
     value = plan.render_config.get("outro_direction", "left")
     direction = str(value or "left").strip().lower().replace("-", "_")
     # ``left`` is the recovered/default exit direction. Other directions stay
-    # fail-closed until their native behavior has not been recovered strongly enough.
+    # fail-closed until their native behavior is evidenced strongly enough.
     if direction != "left":
         raise UnsupportedWhiteboardMotion(f"unsupported whiteboard outro direction: {direction}")
     return direction
