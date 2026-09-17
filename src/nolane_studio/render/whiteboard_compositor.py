@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,8 @@ class WhiteboardSegment:
         if kind not in {"hold", "reveal", "push", "outro"}:
             raise ValueError("whiteboard segment kind must be hold, reveal, push, or outro")
         duration = float(self.duration)
+        if not math.isfinite(duration):
+            raise ValueError("whiteboard segment duration must be finite")
         if duration <= 0:
             raise ValueError("whiteboard segment duration must be > 0")
         object_id = None if self.object_id is None else str(self.object_id).strip()
@@ -213,6 +216,8 @@ def build_object_reveal_command(
     fps: int = 24,
 ) -> list[str]:
     duration = float(duration)
+    if not math.isfinite(duration):
+        raise ValueError("reveal duration must be finite")
     if duration <= 0:
         raise ValueError("reveal duration must be > 0")
     fps = max(1, int(fps))
@@ -305,6 +310,8 @@ def build_object_push_command(
     all previously revealed objects remain fixed.
     """
     duration = float(duration)
+    if not math.isfinite(duration):
+        raise ValueError("push duration must be finite")
     if duration <= 0:
         raise ValueError("push duration must be > 0")
     direction = str(direction).strip().lower().replace("-", "_")
@@ -396,6 +403,8 @@ def build_scene_outro_command(
 ) -> list[str]:
     """Move the fully revealed whiteboard canvas out in the recovered left outro."""
     duration = float(duration)
+    if not math.isfinite(duration):
+        raise ValueError("outro duration must be finite")
     if duration <= 0:
         raise ValueError("outro duration must be > 0")
     direction = str(direction).strip().lower().replace("-", "_")
