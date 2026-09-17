@@ -6,11 +6,16 @@ import sys
 
 import pytest
 
-from nolane_studio.render.effects import RenderProfile, build_image_filter_graph
+from nolane_studio.render.effects import (
+    RenderProfile,
+    build_camera_filter_chain,
+    build_image_filter_graph,
+)
 from nolane_studio.render.exporter import (
     ExportClip,
     _atempo_filter,
     build_image_segment_command,
+    build_transition_segment_command,
     build_video_segment_command,
 )
 from nolane_studio.render.whiteboard_compositor import (
@@ -176,6 +181,183 @@ def test_scene_camera_command_rejects_nonfinite_duration(value):
             camera="slow_zoom",
             duration=value,
         )
+
+
+@pytest.mark.parametrize("field", ["width", "height", "fps"])
+@pytest.mark.parametrize("value", NONFINITE)
+def test_video_segment_command_rejects_nonfinite_render_geometry(field, value):
+    kwargs = {"width": 1280, "height": 720, "fps": 24}
+    kwargs[field] = value
+
+    with pytest.raises(ValueError, match=rf"^{field} must be finite$"):
+        build_video_segment_command(
+            "ffmpeg",
+            "clip.mp4",
+            "out.mp4",
+            has_audio=False,
+            **kwargs,
+        )
+
+
+@pytest.mark.parametrize("field", ["width", "height", "fps"])
+@pytest.mark.parametrize("value", NONFINITE)
+def test_image_filter_graph_rejects_nonfinite_render_geometry(field, value):
+    profile = RenderProfile(style="static", reveal_duration=0.0, hold_duration=1.0)
+    kwargs = {"width": 1280, "height": 720, "fps": 24}
+    kwargs[field] = value
+
+    with pytest.raises(ValueError, match=rf"^{field} must be finite$"):
+        build_image_filter_graph(
+            kwargs["width"],
+            kwargs["height"],
+            kwargs["fps"],
+            profile,
+        )
+
+
+@pytest.mark.parametrize("field", ["width", "height", "fps"])
+@pytest.mark.parametrize("value", NONFINITE)
+def test_camera_filter_chain_rejects_nonfinite_render_geometry(field, value):
+    kwargs = {"width": 1280, "height": 720, "fps": 24}
+    kwargs[field] = value
+
+    with pytest.raises(ValueError, match=rf"^{field} must be finite$"):
+        build_camera_filter_chain(
+            kwargs["width"],
+            kwargs["height"],
+            kwargs["fps"],
+            "slow_zoom",
+        )
+
+
+def _build_whiteboard_geometry_command(kind: str, **geometry):
+    if kind == "reveal":
+        return build_object_reveal_command(
+            "ffmpeg",
+            "before.png",
+            "after.png",
+            "out.mp4",
+            duration=0.75,
+            **geometry,
+        )
+    if kind == "push":
+        return build_object_push_command(
+            "ffmpeg",
+            "base.png",
+            "object.png",
+            "out.mp4",
+            duration=0.75,
+            direction="from_left",
+            **geometry,
+        )
+    return build_scene_outro_command(
+        "ffmpeg",
+        "scene.png",
+        "out.mp4",
+        duration=0.75,
+        direction="left",
+        **geometry,
+    )
+
+
+@pytest.mark.parametrize("kind", ["reveal", "push", "outro"])
+@pytest.mark.parametrize("field", ["width", "height", "fps"])
+@pytest.mark.parametrize("value", NONFINITE)
+def test_whiteboard_commands_reject_nonfinite_render_geometry(kind, field, value):
+    geometry = {"width": 1280, "height": 720, "fps": 24}
+    geometry[field] = value
+
+    with pytest.raises(ValueError, match=rf"^{field} must be finite$"):
+        _build_whiteboard_geometry_command(kind, **geometry)
+
+
+@pytest.mark.parametrize("fps", [0, -1, 0.5])
+def test_video_segment_command_rejects_fps_below_one(fps):
+    with pytest.raises(ValueError, match=r"^fps must be >= 1$"):
+        build_video_segment_command(
+            "ffmpeg",
+            "clip.mp4",
+            "out.mp4",
+            has_audio=False,
+            fps=fps,
+        )
+
+
+@pytest.mark.parametrize("fps", [0, -1, 0.5])
+def test_effect_filter_builders_reject_fps_below_one(fps):
+    profile = RenderProfile(style="static", reveal_duration=0.0, hold_duration=1.0)
+
+    with pytest.raises(ValueError, match=r"^fps must be >= 1$"):
+        build_camera_filter_chain(1280, 720, fps, "slow_zoom")
+    with pytest.raises(ValueError, match=r"^fps must be >= 1$"):
+        build_image_filter_graph(1280, 720, fps, profile)
+
+
+@pytest.mark.parametrize("kind", ["reveal", "push", "outro"])
+@pytest.mark.parametrize("fps", [0, -1, 0.5])
+def test_whiteboard_commands_reject_fps_below_one(kind, fps):
+    with pytest.raises(ValueError, match=r"^fps must be >= 1$"):
+        _build_whiteboard_geometry_command(kind, width=1280, height=720, fps=fps)
+
+
+@pytest.mark.parametrize("fps", [0, -1, 0.5])
+def test_transition_command_rejects_fps_below_one(fps):
+    with pytest.raises(ValueError, match=r"^fps must be >= 1$"):
+        build_transition_segment_command(
+            "ffmpeg",
+            "left.mp4",
+            "right.mp4",
+            "out.mp4",
+            fps=fps,
+        )
+
+
+def test_finite_render_dimensions_preserve_existing_clamp_and_even_normalization():
+    video = build_video_segment_command(
+        "ffmpeg",
+        "clip.mp4",
+        "video.mp4",
+        has_audio=False,
+        width=-9,
+        height=7,
+        fps=24,
+    )
+    profile = RenderProfile(style="static", reveal_duration=0.0, hold_duration=1.0)
+    graph = build_image_filter_graph(-9, 7, 24, profile)
+    push = build_object_push_command(
+        "ffmpeg",
+        "base.png",
+        "object.png",
+        "push.mp4",
+        duration=0.75,
+        direction="from_left",
+        width=-9,
+        height=7,
+        fps=24,
+    )
+
+    assert any("scale=2:6:" in part and "pad=2:6:" in part for part in video)
+    assert "scale=2:6:" in graph and "pad=2:6:" in graph
+    assert any("scale=2:6" in part for part in push)
+
+
+def test_large_finite_render_dimensions_are_not_capped():
+    width = 1_000_001
+    height = 1_000_003
+    video = build_video_segment_command(
+        "ffmpeg",
+        "clip.mp4",
+        "video.mp4",
+        has_audio=False,
+        width=width,
+        height=height,
+        fps=24,
+    )
+
+    assert any(
+        "scale=1000000:1000002:" in part and "pad=1000000:1000002:" in part
+        for part in video
+    )
 
 
 def test_finite_low_level_ffmpeg_durations_preserve_existing_behavior():
