@@ -550,6 +550,7 @@ class WhiteboardSceneCompositor:
     ) -> Path:
         validate_supported_whiteboard_motion(plan)
         segments = build_whiteboard_segments(plan)
+        normalize_ffmpeg_render_geometry(width, height, fps)
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         objects_by_id: Mapping[str, Mapping[str, object]] = {
