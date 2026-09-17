@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 
-from .config import normalize_render_config
+from .config import InvalidSceneDuration, normalize_render_config
 from .effects import (
     InvalidObjectTiming,
     ObjectTimingEntry,
@@ -57,9 +57,12 @@ def build_scene_render_plan(store: ScenePlanStore, project_id: str) -> list[Scen
     plans: list[SceneRenderPlan] = []
     for scene in store.list_scenes(project_id):
         scene_id = str(scene["id"])
-        settings = store.get_scene_render_settings(scene_id)
-        render_config = normalize_render_config(settings)
-        profile = render_profile_from_config(render_config)
+        try:
+            settings = store.get_scene_render_settings(scene_id)
+            render_config = normalize_render_config(settings)
+            profile = render_profile_from_config(render_config)
+        except InvalidSceneDuration as exc:
+            raise InvalidSceneDuration(f"scene {scene_id} {exc}") from exc
         objects = tuple(
             dict(obj)
             for obj in store.list_visual_objects(scene_id)
@@ -71,16 +74,19 @@ def build_scene_render_plan(store: ScenePlanStore, project_id: str) -> list[Scen
             raise InvalidObjectTiming(f"scene {scene_id} {exc}") from exc
         outro = _outro_seconds(render_config)
 
-        if timing:
-            total = estimate_object_timeline_seconds(
-                timing,
-                hold_duration=profile.hold_duration,
-                outro_duration=outro,
-            )
-        else:
-            # A scene with no canvas objects still has a real scene duration;
-            # preserve reveal+hold instead of collapsing it to hold only.
-            total = profile.total_duration + outro
+        try:
+            if timing:
+                total = estimate_object_timeline_seconds(
+                    timing,
+                    hold_duration=profile.hold_duration,
+                    outro_duration=outro,
+                )
+            else:
+                # A scene with no canvas objects still has a real scene duration;
+                # preserve reveal+hold instead of collapsing it to hold only.
+                total = profile.total_duration + outro
+        except InvalidSceneDuration as exc:
+            raise InvalidSceneDuration(f"scene {scene_id} {exc}") from exc
 
         media_sources = tuple(
             str(obj.get("source", ""))
