@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from .config import normalize_render_config
+
+
+class InvalidObjectTiming(ValueError):
+    """Raised when persisted object timing cannot form a finite timeline."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,9 +51,24 @@ class ObjectTimingEntry:
         object_id = str(self.object_id).strip()
         if not object_id:
             raise ValueError("object_id must not be blank")
-        values = (float(self.start), float(self.pause), float(self.draw), float(self.push))
+        fields = (
+            ("start", float(self.start)),
+            ("pause", float(self.pause)),
+            ("draw", float(self.draw)),
+            ("push", float(self.push)),
+        )
+        for field, value in fields:
+            if not math.isfinite(value):
+                raise InvalidObjectTiming(
+                    f"object {object_id} timing {field} must be finite"
+                )
+        values = tuple(value for _field, value in fields)
         if any(value < 0 for value in values):
             raise ValueError("object timing values must be >= 0")
+        if not math.isfinite(sum(values)):
+            raise InvalidObjectTiming(
+                f"object {object_id} timing total must be finite"
+            )
         object.__setattr__(self, "object_id", object_id)
         object.__setattr__(self, "start", values[0])
         object.__setattr__(self, "pause", values[1])
@@ -71,7 +91,13 @@ def _nonnegative_seconds(value: Any, default: float = 0.0) -> float:
 def _timing_value(raw: Mapping[str, Any], name: str, default: float) -> float:
     for key in (name, f"{name}_seconds", f"{name}_duration"):
         if key in raw:
-            return _nonnegative_seconds(raw.get(key), default)
+            try:
+                number = float(raw.get(key))
+            except (TypeError, ValueError):
+                return _nonnegative_seconds(default)
+            if not math.isfinite(number):
+                raise InvalidObjectTiming(f"timing {name} must be finite")
+            return max(0.0, number)
     return _nonnegative_seconds(default)
 
 
@@ -151,9 +177,12 @@ def build_render_timing_plan(
     for obj in visible:
         object_id = str(obj["id"]).strip()
         custom = custom_by_id.get(object_id) if mode == "custom" else None
-        pause = _timing_value(custom, "pause", 0.0) if custom is not None else 0.0
-        draw = _timing_value(custom, "draw", fixed_draw) if custom is not None else fixed_draw
-        push = _timing_value(custom, "push", 0.0) if custom is not None else 0.0
+        try:
+            pause = _timing_value(custom, "pause", 0.0) if custom is not None else 0.0
+            draw = _timing_value(custom, "draw", fixed_draw) if custom is not None else fixed_draw
+            push = _timing_value(custom, "push", 0.0) if custom is not None else 0.0
+        except InvalidObjectTiming as exc:
+            raise InvalidObjectTiming(f"object {object_id} {exc}") from exc
         entry = ObjectTimingEntry(object_id=object_id, start=cursor, pause=pause, draw=draw, push=push)
         plan.append(entry)
         cursor = entry.end
