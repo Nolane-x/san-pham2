@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from .compositor import CompositionError, render_scene_layer_snapshot
+from .effects import normalize_ffmpeg_render_geometry
 from .exporter import probe_has_audio, resolve_ffmpeg_exe
 from .ffmpeg import SubprocessRunner
 from .scene_plan import SceneRenderPlan
@@ -146,6 +147,7 @@ class SceneVideoCompositor:
         if not source.is_file():
             raise FileNotFoundError(f"scene video source not found: {source}")
 
+        normalize_ffmpeg_render_geometry(width, height, fps)
         canvas_w = _even(width, 1280)
         canvas_h = _even(height, 720)
         video_w = _even(video.get("width"), 640)
