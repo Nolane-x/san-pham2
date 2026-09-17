@@ -53,7 +53,7 @@ def validate_supported_static_visual_geometry(
     *,
     objects: Sequence[Mapping[str, Any]] | None = None,
 ) -> None:
-    """Reject non-finite visible static-object geometry before rasterization."""
+    """Preflight visible static-object geometry and payload before rasterization."""
     candidates = plan.objects if objects is None else objects
     for raw in candidates:
         if not bool(raw.get("visible", True)):
@@ -67,6 +67,7 @@ def validate_supported_static_visual_geometry(
                 raise CompositionError(
                     f"scene {plan.scene_id} object {object_id} {field} must be finite"
                 )
+    validate_supported_static_visual_payload(plan, objects=candidates)
 
 
 def validate_supported_static_visual_payload(
@@ -124,7 +125,6 @@ def validate_supported_static_visual_state(
 ) -> None:
     """Preflight all recovered static-object state before any Qt rasterization."""
     validate_supported_static_visual_geometry(plan, objects=objects)
-    validate_supported_static_visual_payload(plan, objects=objects)
 
 
 def render_scene_layer_snapshot(
