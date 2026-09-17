@@ -43,6 +43,11 @@ def _ordered_visible(objects: Sequence[Mapping[str, Any]]) -> list[dict[str, Any
     )
 
 
+def _static_payload(raw: Mapping[str, Any]) -> Mapping[str, Any]:
+    payload = raw.get("payload")
+    return payload if isinstance(payload, Mapping) else {}
+
+
 def validate_supported_static_visual_geometry(
     plan: SceneRenderPlan,
     *,
@@ -62,6 +67,64 @@ def validate_supported_static_visual_geometry(
                 raise CompositionError(
                     f"scene {plan.scene_id} object {object_id} {field} must be finite"
                 )
+
+
+def validate_supported_static_visual_payload(
+    plan: SceneRenderPlan,
+    *,
+    objects: Sequence[Mapping[str, Any]] | None = None,
+) -> None:
+    """Reject persisted static payload values that Qt cannot render faithfully."""
+    candidates = plan.objects if objects is None else objects
+    for raw in candidates:
+        if not bool(raw.get("visible", True)):
+            continue
+        kind = str(raw.get("kind", "")).strip().lower()
+        if kind not in _STATIC_VISUAL_KINDS:
+            continue
+        object_id = str(raw.get("id", "")).strip()
+        payload = _static_payload(raw)
+
+        if kind == "text":
+            if not math.isfinite(_float(payload.get("font_size"), 36.0)):
+                raise CompositionError(
+                    f"scene {plan.scene_id} object {object_id} text font_size must be finite"
+                )
+            continue
+
+        if kind != "drawing":
+            continue
+
+        if not math.isfinite(_float(payload.get("stroke"), 5.0)):
+            raise CompositionError(
+                f"scene {plan.scene_id} object {object_id} drawing stroke must be finite"
+            )
+
+        points = payload.get("points") or []
+        if not isinstance(points, (list, tuple)):
+            raise CompositionError(
+                f"scene {plan.scene_id} object {object_id} drawing points must be coordinate pairs"
+            )
+        for index, point in enumerate(points):
+            if not isinstance(point, (list, tuple)) or len(point) < 2:
+                raise CompositionError(
+                    f"scene {plan.scene_id} object {object_id} drawing points must be coordinate pairs"
+                )
+            for axis, component in (("x", point[0]), ("y", point[1])):
+                if not math.isfinite(_float(component, 0.0)):
+                    raise CompositionError(
+                        f"scene {plan.scene_id} object {object_id} drawing point {index} {axis} must be finite"
+                    )
+
+
+def validate_supported_static_visual_state(
+    plan: SceneRenderPlan,
+    *,
+    objects: Sequence[Mapping[str, Any]] | None = None,
+) -> None:
+    """Preflight all recovered static-object state before any Qt rasterization."""
+    validate_supported_static_visual_geometry(plan, objects=objects)
+    validate_supported_static_visual_payload(plan, objects=objects)
 
 
 def render_scene_layer_snapshot(
@@ -88,7 +151,7 @@ def render_scene_layer_snapshot(
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     ordered = _ordered_visible(objects)
-    validate_supported_static_visual_geometry(plan, objects=ordered)
+    validate_supported_static_visual_state(plan, objects=ordered)
 
     video_ids = [
         str(obj.get("id", ""))
@@ -125,9 +188,7 @@ def render_scene_layer_snapshot(
             object_width = max(0.0, _float(obj.get("width"), 320.0))
             object_height = max(0.0, _float(obj.get("height"), 180.0))
             rotation = _float(obj.get("rotation"), 0.0)
-            payload: Mapping[str, Any] = (
-                obj.get("payload") if isinstance(obj.get("payload"), Mapping) else {}
-            )
+            payload = _static_payload(obj)
 
             painter.save()
             try:
