@@ -284,6 +284,7 @@ class MediaExporter:
         clips = list(clips)
         if not clips:
             raise ValueError("at least one media clip is required")
+        normalize_ffmpeg_render_geometry(width, height, fps)
         output = Path(output)
         output.parent.mkdir(parents=True, exist_ok=True)
         clip_ids = [clip.clip_id or str(index) for index, clip in enumerate(clips)]
