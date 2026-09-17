@@ -297,6 +297,8 @@ def build_image_filter_graph(
         height -= 1
     fps = max(1, int(fps))
     total = profile.total_duration if total_duration is None else float(total_duration)
+    if not math.isfinite(total):
+        raise ValueError("total_duration must be finite")
     if total <= 0:
         raise ValueError("total_duration must be > 0")
     reveal = min(profile.reveal_duration, total)
