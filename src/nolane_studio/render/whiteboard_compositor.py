@@ -64,7 +64,7 @@ def _outro_direction(plan: SceneRenderPlan) -> str:
     value = plan.render_config.get("outro_direction", "left")
     direction = str(value or "left").strip().lower().replace("-", "_")
     # ``left`` is the recovered/default exit direction. Other directions stay
-    # fail-closed until their native behavior is evidenced strongly enough.
+    # fail-closed until their native behavior has not been recovered strongly enough.
     if direction != "left":
         raise UnsupportedWhiteboardMotion(f"unsupported whiteboard outro direction: {direction}")
     return direction
@@ -495,6 +495,8 @@ def build_scene_camera_command(
 ) -> list[str]:
     """Apply recovered camera motion after object timing has been rendered."""
     duration = float(duration)
+    if not math.isfinite(duration):
+        raise ValueError("camera duration must be finite")
     if duration <= 0:
         raise ValueError("camera duration must be > 0")
     camera = str(camera).strip().lower().replace("-", "_")
