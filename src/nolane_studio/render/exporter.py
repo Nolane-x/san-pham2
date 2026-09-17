@@ -10,7 +10,12 @@ from typing import Callable, Iterable, Mapping, Sequence
 
 from nolane_studio.domain import TransitionSpec
 
-from .effects import RenderProfile, build_image_filter_graph
+from .effects import (
+    RenderProfile,
+    build_image_filter_graph,
+    normalize_ffmpeg_fps,
+    normalize_ffmpeg_render_geometry,
+)
 from .ffmpeg import SubprocessRunner
 from .timeline import build_transition_gaps
 
@@ -62,16 +67,11 @@ def resolve_ffmpeg_exe() -> str:
 
 
 def _video_filter(width: int, height: int, fps: int) -> str:
-    width = max(2, int(width))
-    height = max(2, int(height))
-    if width % 2:
-        width -= 1
-    if height % 2:
-        height -= 1
+    width, height, fps = normalize_ffmpeg_render_geometry(width, height, fps)
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=white,"
-        f"fps={int(fps)},setsar=1"
+        f"fps={fps},setsar=1"
     )
 
 
@@ -209,7 +209,7 @@ def build_transition_segment_command(
     duration = float(duration)
     if not 0.1 <= duration <= 10.0:
         raise ValueError("transition duration must be between 0.1 and 10 seconds")
-    fps = max(1, int(fps))
+    fps = normalize_ffmpeg_fps(fps)
     effect = str(effect).strip().lower()
     allowed = {"fade", "wipeleft", "wiperight", "slideleft", "slideright", "smoothleft", "smoothright"}
     if effect not in allowed:
