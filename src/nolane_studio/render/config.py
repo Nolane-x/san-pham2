@@ -136,7 +136,10 @@ def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         "hand_style": str(incoming.get("hand_style", "hand-1.png") or "hand-1.png"),
         "remove_background_enabled": _truthy(incoming.get("remove_background_enabled", False)),
         "auto_object_fx_enabled": _truthy(incoming.get("auto_object_fx_enabled", False)),
-        "auto_object_fx_config": dict(incoming.get("auto_object_fx_config") or {}),
+        "auto_object_fx_config": _config_mapping(
+            incoming.get("auto_object_fx_config"),
+            field="auto_object_fx_config",
+        ),
         "image_motion_config": _config_mapping(
             incoming.get("image_motion_config"),
             field="image_motion_config",
