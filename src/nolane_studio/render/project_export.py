@@ -57,6 +57,18 @@ def validate_supported_scene_render_state(plan: SceneRenderPlan) -> None:
             f"scene {plan.scene_id} uses unsupported persisted render state: hand_style"
         )
 
+    has_video = any(
+        str(obj.get("kind", "")).strip().lower() == "video"
+        and bool(obj.get("visible", True))
+        for obj in plan.objects
+    )
+    if bool(plan.render_config.get("outro_enabled", False)) and (
+        plan.profile.style != "whiteboard" or has_video
+    ):
+        raise UnsupportedSceneRenderState(
+            f"scene {plan.scene_id} uses unsupported persisted render state: outro_enabled"
+        )
+
     if plan.render_config.get("custom_object_push_config"):
         raise UnsupportedSceneRenderState(
             f"scene {plan.scene_id} uses unsupported persisted render state: custom_object_push_config"
