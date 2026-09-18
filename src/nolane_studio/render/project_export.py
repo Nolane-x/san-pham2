@@ -99,6 +99,17 @@ def validate_supported_scene_render_state(plan: SceneRenderPlan) -> None:
         )
 
 
+def validate_project_scene_ordering(plans: Sequence[SceneRenderPlan]) -> None:
+    """Reject ambiguous persisted scene ordering before any renderer starts."""
+    seen: set[int] = set()
+    for plan in plans:
+        if plan.position in seen:
+            raise UnsupportedProjectTimeline(
+                f"scene position {plan.position} must be unique"
+            )
+        seen.add(plan.position)
+
+
 def validate_project_scene_media(plans: Sequence[SceneRenderPlan]) -> None:
     """Preflight every visible image/video source before any scene render starts."""
     for plan in plans:
@@ -280,6 +291,7 @@ class ProjectSceneExporter:
         plans = build_scene_render_plan(self.store, project_id)
         if not plans:
             raise ValueError("project has no scenes to export")
+        validate_project_scene_ordering(plans)
         validate_project_scene_media(plans)
         validate_project_scene_render_state(plans)
         validate_project_scene_composition(plans)
