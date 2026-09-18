@@ -69,6 +69,11 @@ def validate_supported_scene_render_state(plan: SceneRenderPlan) -> None:
             f"scene {plan.scene_id} uses unsupported persisted render state: outro_enabled"
         )
 
+    if has_video and plan.profile.camera != "static":
+        raise UnsupportedSceneRenderState(
+            f"scene {plan.scene_id} uses unsupported persisted render state: visual_mode"
+        )
+
     if plan.render_config.get("custom_object_push_config"):
         raise UnsupportedSceneRenderState(
             f"scene {plan.scene_id} uses unsupported persisted render state: custom_object_push_config"
