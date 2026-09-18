@@ -68,7 +68,6 @@ def validate_supported_video_composition(plan: SceneRenderPlan) -> None:
     if len(videos) > 1:
         raise UnsupportedVideoComposition("multiple video layers are not yet supported")
 
-    validate_supported_visual_scalar_state(plan, objects=videos)
     video = videos[0]
     for field, default in (
         ("x", 0.0),
@@ -78,6 +77,7 @@ def validate_supported_video_composition(plan: SceneRenderPlan) -> None:
     ):
         _finite_video_number(video.get(field), default, field)
     _finite_video_rotation(video.get("rotation"))
+    validate_supported_visual_scalar_state(plan, objects=videos)
 
 
 def _rotation_layout(
