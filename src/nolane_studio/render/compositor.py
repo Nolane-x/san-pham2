@@ -36,6 +36,56 @@ def _bounded_opacity(value: Any) -> float:
     return max(0.0, min(1.0, _float(value, 1.0)))
 
 
+def _validated_visible_z_index(plan: SceneRenderPlan, raw: Mapping[str, Any]) -> int | None:
+    if "z_index" not in raw:
+        return None
+
+    value = raw.get("z_index")
+    object_id = str(raw.get("id", "")).strip()
+    try:
+        if isinstance(value, float):
+            if not math.isfinite(value) or not value.is_integer():
+                raise ValueError
+            index = int(value)
+        elif isinstance(value, (int, str)):
+            index = int(value)
+        else:
+            index = int(value)
+            if value != index:
+                raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        raise CompositionError(
+            f"scene {plan.scene_id} object {object_id} z_index must be a non-negative integer"
+        ) from None
+
+    if index < 0:
+        raise CompositionError(
+            f"scene {plan.scene_id} object {object_id} z_index must be a non-negative integer"
+        )
+    return index
+
+
+def validate_supported_static_visual_ordering(
+    plan: SceneRenderPlan,
+    *,
+    objects: Sequence[Mapping[str, Any]] | None = None,
+) -> None:
+    """Reject ambiguous or non-integral visible layer ordering."""
+    candidates = plan.objects if objects is None else objects
+    seen: set[int] = set()
+    for raw in candidates:
+        if not bool(raw.get("visible", True)):
+            continue
+        index = _validated_visible_z_index(plan, raw)
+        if index is None:
+            continue
+        if index in seen:
+            raise CompositionError(
+                f"scene {plan.scene_id} visible z_index {index} must be unique"
+            )
+        seen.add(index)
+
+
 def _ordered_visible(objects: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         (dict(obj) for obj in objects if bool(obj.get("visible", True))),
@@ -124,6 +174,7 @@ def validate_supported_static_visual_state(
     objects: Sequence[Mapping[str, Any]] | None = None,
 ) -> None:
     """Preflight all recovered static-object state before any Qt rasterization."""
+    validate_supported_static_visual_ordering(plan, objects=objects)
     validate_supported_static_visual_geometry(plan, objects=objects)
 
 
@@ -148,8 +199,8 @@ def render_scene_layer_snapshot(
 
     width = max(2, int(width))
     height = max(2, int(height))
+    validate_supported_static_visual_state(plan, objects=objects)
     ordered = _ordered_visible(objects)
-    validate_supported_static_visual_state(plan, objects=ordered)
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
 
