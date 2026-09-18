@@ -152,22 +152,28 @@ def validate_persisted_timeline_state(
     """Reject persisted timeline semantics that cannot be exported faithfully."""
     raw = dict(state or {})
 
-    for field, empty in (
-        ("clips", {}),
-        ("videoClips", []),
-        ("audioClips", []),
-    ):
-        value = raw.get(field, empty)
+    clips = raw.get("clips", {})
+    if not isinstance(clips, Mapping):
+        raise UnsupportedProjectTimeline("clips must be a mapping")
+    if clips:
+        raise UnsupportedProjectTimeline(
+            "clips timeline payload is not yet recovered strongly enough for faithful export"
+        )
+
+    for field in ("videoClips", "audioClips"):
+        value = raw.get(field, [])
+        if not isinstance(value, list):
+            raise UnsupportedProjectTimeline(f"{field} must be a list")
         if value:
             raise UnsupportedProjectTimeline(
                 f"{field} timeline payload is not yet recovered strongly enough for faithful export"
             )
 
     media_order = raw.get("mediaOrder", [])
-    if not media_order:
-        return
     if not isinstance(media_order, list):
         raise UnsupportedProjectTimeline("mediaOrder must be a list")
+    if not media_order:
+        return
 
     normalized_order = [str(item).strip() for item in media_order]
     normalized_clip_ids = [str(clip_id) for clip_id in clip_ids]
