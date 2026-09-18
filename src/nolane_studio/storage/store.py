@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
-from ..render.config import normalize_render_config
+from ..render.config import InvalidRenderConfig, normalize_render_config
 from .schema import SCHEMA_SQL
 
 
@@ -101,6 +101,15 @@ class ProjectStore:
         voice_text = str(getattr(scene, "voice_text", "") or text)
         metadata = getattr(scene, "metadata", {}) or {}
         return text, image_prompt, voice_text, json.dumps(dict(metadata), ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _stored_render_config(metadata: Mapping[str, Any]) -> dict[str, Any]:
+        raw = metadata.get("render_config")
+        if raw is None:
+            return {}
+        if not isinstance(raw, Mapping):
+            raise InvalidRenderConfig("render_config must be a mapping")
+        return dict(raw)
 
     @staticmethod
     def _sync_scene_count(conn: sqlite3.Connection, project_id: str) -> None:
@@ -247,7 +256,7 @@ class ProjectStore:
             if row is None:
                 raise KeyError(scene_id)
             metadata = json.loads(row["metadata_json"] or "{}")
-            stored = dict(metadata.get("render_config") or {})
+            stored = self._stored_render_config(metadata)
             stored.update(dict(settings or {}))
             stored["reveal_duration"] = row["reveal_duration"] if reveal_duration is None else reveal_duration
             stored["hold_duration"] = row["hold_duration"] if hold_duration is None else hold_duration
@@ -283,7 +292,7 @@ class ProjectStore:
         if row is None:
             raise KeyError(scene_id)
         metadata = json.loads(row["metadata_json"] or "{}")
-        raw = dict(metadata.get("render_config") or {})
+        raw = self._stored_render_config(metadata)
         raw["reveal_duration"] = row["reveal_duration"]
         raw["hold_duration"] = row["hold_duration"]
         return normalize_render_config(raw)
