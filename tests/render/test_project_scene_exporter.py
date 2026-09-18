@@ -6,7 +6,7 @@ import pytest
 
 from nolane_studio.domain import Scene
 from nolane_studio.render import project_export
-from nolane_studio.render.compositor import CompositionRequiresVideo
+from nolane_studio.render.compositor import CompositionError, CompositionRequiresVideo
 from nolane_studio.render.project_export import ProjectSceneExporter
 from nolane_studio.render.whiteboard_compositor import UnsupportedWhiteboardMotion
 from nolane_studio.storage.store import ProjectStore
@@ -389,3 +389,64 @@ def test_project_exporter_rejects_project_without_scenes(tmp_path):
 
     with pytest.raises(ValueError, match="scene"):
         exporter.export("empty", tmp_path / "never.mp4")
+
+
+def _store_with_later_corrupt_image(tmp_path):
+    store, first, second = _store(tmp_path)
+    corrupt = tmp_path / "corrupt-image.png"
+    corrupt.write_bytes(b"this is not a decodable image")
+    object_id = store.add_visual_object(
+        second["id"],
+        "image",
+        name="Corrupt image",
+        source=str(corrupt),
+    )
+    return store, first, second, object_id, corrupt
+
+
+def test_project_media_preflight_rejects_existing_undecodable_image(tmp_path):
+    store, _first, second, object_id, corrupt = _store_with_later_corrupt_image(tmp_path)
+    plans = project_export.build_scene_render_plan(store, "p1")
+
+    with pytest.raises(
+        CompositionError,
+        match=(
+            rf"^scene {second['id']} object {object_id} "
+            rf"unable to decode scene image: {corrupt}$"
+        ),
+    ):
+        project_export.validate_project_scene_media(plans)
+
+
+def test_project_exporter_rejects_later_undecodable_image_before_any_render(tmp_path):
+    store, _first, second, object_id, corrupt = _store_with_later_corrupt_image(tmp_path)
+    media = FakeMediaExporter()
+    render_calls = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        return project_export.render_scene_snapshot(plan, output)
+
+    def whiteboard(plan, output, **kwargs):
+        render_calls.append(("whiteboard", plan.scene_id))
+        return _touch_whiteboard(plan, output, **kwargs)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        whiteboard_renderer=whiteboard,
+    )
+
+    with pytest.raises(
+        CompositionError,
+        match=(
+            rf"^scene {second['id']} object {object_id} "
+            rf"unable to decode scene image: {corrupt}$"
+        ),
+    ):
+        try:
+            exporter.export("p1", tmp_path / "never-corrupt-image.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
