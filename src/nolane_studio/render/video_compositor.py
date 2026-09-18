@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from .compositor import CompositionError, render_scene_layer_snapshot
+from .compositor import CompositionError, render_scene_layer_snapshot, validate_supported_static_visual_state
 from .effects import normalize_ffmpeg_render_geometry
 from .exporter import probe_has_audio, resolve_ffmpeg_exe
 from .ffmpeg import SubprocessRunner
@@ -159,6 +159,7 @@ class SceneVideoCompositor:
         opacity = max(0.0, min(1.0, _number(video.get("opacity"), 1.0)))
         total = max(0.001, float(plan.total_duration))
         fps = max(1, int(fps))
+        validate_supported_static_visual_state(plan)
 
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
