@@ -86,6 +86,55 @@ def validate_supported_static_visual_ordering(
         seen.add(index)
 
 
+def _strict_finite_object_number(
+    plan: SceneRenderPlan,
+    raw: Mapping[str, Any],
+    field: str,
+) -> float:
+    object_id = str(raw.get("id", "")).strip()
+    try:
+        value = float(raw.get(field))
+    except (TypeError, ValueError):
+        raise CompositionError(
+            f"scene {plan.scene_id} object {object_id} {field} must be finite"
+        ) from None
+    if not math.isfinite(value):
+        raise CompositionError(
+            f"scene {plan.scene_id} object {object_id} {field} must be finite"
+        )
+    return value
+
+
+def validate_supported_visual_scalar_state(
+    plan: SceneRenderPlan,
+    *,
+    objects: Sequence[Mapping[str, Any]] | None = None,
+) -> None:
+    """Reject persisted visual scalar values outside the storage contract."""
+    candidates = plan.objects if objects is None else objects
+    for raw in candidates:
+        if not bool(raw.get("visible", True)):
+            continue
+        object_id = str(raw.get("id", "")).strip()
+
+        for field in ("width", "height"):
+            if field not in raw:
+                continue
+            value = _strict_finite_object_number(plan, raw, field)
+            if value <= 0:
+                raise CompositionError(
+                    f"scene {plan.scene_id} object {object_id} {field} must be > 0"
+                )
+
+        if "opacity" not in raw:
+            continue
+        opacity = _strict_finite_object_number(plan, raw, "opacity")
+        if not 0.0 <= opacity <= 1.0:
+            raise CompositionError(
+                f"scene {plan.scene_id} object {object_id} opacity must be within 0..1"
+            )
+
+
 def _ordered_visible(objects: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         (dict(obj) for obj in objects if bool(obj.get("visible", True))),
@@ -174,8 +223,15 @@ def validate_supported_static_visual_state(
     objects: Sequence[Mapping[str, Any]] | None = None,
 ) -> None:
     """Preflight all recovered static-object state before any Qt rasterization."""
-    validate_supported_static_visual_ordering(plan, objects=objects)
-    validate_supported_static_visual_geometry(plan, objects=objects)
+    candidates = plan.objects if objects is None else objects
+    validate_supported_static_visual_ordering(plan, objects=candidates)
+    static_candidates = tuple(
+        raw
+        for raw in candidates
+        if str(raw.get("kind", "")).strip().lower() in _STATIC_VISUAL_KINDS
+    )
+    validate_supported_visual_scalar_state(plan, objects=static_candidates)
+    validate_supported_static_visual_geometry(plan, objects=candidates)
 
 
 def render_scene_layer_snapshot(
