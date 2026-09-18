@@ -106,13 +106,25 @@ def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
             strict="hold_duration" in incoming,
         ),
         "brush_mode": str(incoming.get("brush_mode", "lr") or "lr"),
-        "custom_draw_points": list(incoming.get("custom_draw_points") or []),
+        "custom_draw_points": _config_list(
+            incoming.get("custom_draw_points"),
+            field="custom_draw_points",
+        ),
         "large_object_push_enabled": _truthy(incoming.get("large_object_push_enabled", False)),
         "large_object_push_direction": str(incoming.get("large_object_push_direction", "from_left") or "from_left"),
         "large_object_push_mode": str(incoming.get("large_object_push_mode", "automatic") or "automatic"),
-        "custom_object_push_config": list(incoming.get("custom_object_push_config") or []),
-        "custom_object_effect_config": list(incoming.get("custom_object_effect_config") or []),
-        "custom_object_sound_config": list(incoming.get("custom_object_sound_config") or []),
+        "custom_object_push_config": _config_list(
+            incoming.get("custom_object_push_config"),
+            field="custom_object_push_config",
+        ),
+        "custom_object_effect_config": _config_list(
+            incoming.get("custom_object_effect_config"),
+            field="custom_object_effect_config",
+        ),
+        "custom_object_sound_config": _config_list(
+            incoming.get("custom_object_sound_config"),
+            field="custom_object_sound_config",
+        ),
         "custom_camera_enabled": _truthy(incoming.get("custom_camera_enabled", False)),
         "custom_camera_config": _mapping_list(
             incoming.get("custom_camera_config"),
@@ -144,7 +156,10 @@ def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
             incoming.get("image_motion_config"),
             field="image_motion_config",
         ),
-        "batch_voice_segments": list(incoming.get("batch_voice_segments") or []),
+        "batch_voice_segments": _config_list(
+            incoming.get("batch_voice_segments"),
+            field="batch_voice_segments",
+        ),
         "extras": {k: v for k, v in incoming.items() if k not in _KNOWN},
     }
     return config
