@@ -358,3 +358,100 @@ def test_project_exporter_rejects_later_duplicate_visible_object_timing_before_a
         finally:
             assert render_calls == []
             assert media.calls == []
+
+
+def test_custom_object_timing_rejects_nonmapping_entry():
+    with pytest.raises(
+        InvalidObjectTiming,
+        match=r"^custom timing entry 0 must be a mapping$",
+    ):
+        build_render_timing_plan(
+            [{"id": "object-a", "visible": True}],
+            {
+                "object_timing_mode": "custom",
+                "reveal_duration": 1.0,
+                "custom_object_timing_config": ["oops"],
+            },
+        )
+
+
+def test_project_exporter_rejects_later_nonmapping_custom_timing_before_any_render(
+    tmp_path,
+):
+    store = ProjectStore(tmp_path / "nonmapping-timing.db")
+    store.initialize()
+    store.create_project("p1", "Non-mapping custom timing preflight")
+    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Second")])
+    first, second = store.list_scenes("p1")
+
+    first_object_id = store.add_visual_object(
+        first["id"],
+        "shape",
+        name="First shape",
+        payload={"fill": "#FF0000"},
+    )
+    store.add_visual_object(
+        second["id"],
+        "shape",
+        name="Second shape",
+        payload={"fill": "#00AAFF"},
+    )
+    store.update_scene_render_settings(
+        first["id"],
+        reveal_duration=0.25,
+        hold_duration=0.1,
+        settings={
+            "style": "whiteboard",
+            "object_timing_mode": "custom",
+            "custom_object_timing_config": [
+                {"object_id": first_object_id, "draw": 0.25}
+            ],
+        },
+    )
+    store.update_scene_render_settings(
+        second["id"],
+        reveal_duration=0.25,
+        hold_duration=0.1,
+        settings={
+            "style": "whiteboard",
+            "object_timing_mode": "custom",
+            "custom_object_timing_config": ["oops"],
+        },
+    )
+
+    media = FakeMediaExporter()
+    render_calls: list[tuple[str, str]] = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def video(plan, output, **kwargs):
+        del output, kwargs
+        render_calls.append(("video", plan.scene_id))
+        raise AssertionError("video renderer must not be called")
+
+    def whiteboard(plan, output, **kwargs):
+        del output, kwargs
+        render_calls.append(("whiteboard", plan.scene_id))
+        raise AssertionError("whiteboard renderer must not be called")
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        video_renderer=video,
+        whiteboard_renderer=whiteboard,
+    )
+
+    with pytest.raises(
+        InvalidObjectTiming,
+        match=rf"^scene {second['id']} custom timing entry 0 must be a mapping$",
+    ):
+        try:
+            exporter.export("p1", tmp_path / "never-nonmapping.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
