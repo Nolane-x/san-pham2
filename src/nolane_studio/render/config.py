@@ -79,17 +79,12 @@ def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         raise InvalidRenderConfig("render_config must be a mapping")
     else:
         incoming = dict(raw)
-    visual_mode = str(incoming.get("visual_mode", "") or "").strip().lower()
-    if not visual_mode:
+    visual_mode = str(incoming.get("visual_mode", "drawing") or "drawing").strip().lower()
+    if visual_mode not in {"drawing", "camera_motion"}:
         visual_mode = "drawing"
-    elif visual_mode not in {"drawing", "camera_motion"}:
-        raise InvalidRenderConfig("visual_mode must be drawing or camera_motion")
-
-    style = str(incoming.get("style", "") or "").strip().lower()
-    if not style:
+    style = str(incoming.get("style", "whiteboard") or "whiteboard").strip().lower()
+    if style not in {"whiteboard", "color_reveal"}:
         style = "whiteboard"
-    elif style not in {"whiteboard", "color_reveal"}:
-        raise InvalidRenderConfig("style must be whiteboard or color_reveal")
 
     config = {
         "style": style,
