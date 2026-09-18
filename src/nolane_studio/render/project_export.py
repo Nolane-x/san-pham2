@@ -103,8 +103,13 @@ def validate_project_scene_ordering(plans: Sequence[SceneRenderPlan]) -> None:
     """Reject ambiguous persisted scene ordering before any renderer starts."""
     seen: set[int] = set()
     for plan in plans:
-        if not str(plan.scene_id).strip():
+        scene_id = str(plan.scene_id)
+        if not scene_id.strip():
             raise UnsupportedProjectTimeline("scene id must not be blank")
+        if scene_id != scene_id.strip():
+            raise UnsupportedProjectTimeline(
+                "scene id must not contain surrounding whitespace"
+            )
         if plan.position in seen:
             raise UnsupportedProjectTimeline(
                 f"scene position {plan.position} must be unique"
