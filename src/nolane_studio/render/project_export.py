@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
-from .compositor import render_scene_snapshot, validate_supported_static_visual_state
+from .compositor import CompositionError, render_scene_snapshot, validate_supported_static_visual_state
 from .effects import normalize_ffmpeg_render_geometry
 from .exporter import ExportClip, MediaExporter
 from .scene_plan import ScenePlanStore, SceneRenderPlan, build_scene_render_plan
@@ -108,12 +108,19 @@ def validate_project_scene_media(plans: Sequence[SceneRenderPlan]) -> None:
                 continue
             object_id = str(obj.get("id", "")).strip()
             source = str(obj.get("source") or "").strip()
-            if source and Path(source).is_file():
-                continue
-            rendered_source = source or "<blank>"
-            raise MissingSceneMedia(
-                f"scene {plan.scene_id} object {object_id} missing {kind} source: {rendered_source}"
-            )
+            if not source or not Path(source).is_file():
+                rendered_source = source or "<blank>"
+                raise MissingSceneMedia(
+                    f"scene {plan.scene_id} object {object_id} missing {kind} source: {rendered_source}"
+                )
+            if kind == "image":
+                from PySide6.QtGui import QImage
+
+                if QImage(source).isNull():
+                    raise CompositionError(
+                        f"scene {plan.scene_id} object {object_id} "
+                        f"unable to decode scene image: {source}"
+                    )
 
 
 def validate_project_scene_render_state(plans: Sequence[SceneRenderPlan]) -> None:
