@@ -148,7 +148,7 @@ def _timing_value(raw: Mapping[str, Any], name: str, default: float) -> float:
             try:
                 number = float(raw.get(key))
             except (TypeError, ValueError):
-                return _nonnegative_seconds(default)
+                raise InvalidObjectTiming(f"timing {name} must be finite")
             if not math.isfinite(number):
                 raise InvalidObjectTiming(f"timing {name} must be finite")
             return max(0.0, number)
