@@ -305,3 +305,103 @@ def test_project_exporter_rejects_later_unknown_visible_object_kind_before_any_r
         finally:
             assert render_calls == []
             assert media.calls == []
+
+
+
+def test_composition_preflight_rejects_non_mapping_static_object_payload():
+    obj = {
+        "id": "text-corrupt-payload",
+        "kind": "text",
+        "visible": True,
+        "x": 0.0,
+        "y": 0.0,
+        "width": 320.0,
+        "height": 180.0,
+        "rotation": 0.0,
+        "opacity": 1.0,
+        "payload": [],
+    }
+
+    with pytest.raises(
+        CompositionError,
+        match=r"^scene scene-static object text-corrupt-payload payload must be a mapping$",
+    ):
+        validate_project_scene_composition([_plan(obj)])
+
+
+def test_project_exporter_rejects_later_non_mapping_static_payload_before_any_render(tmp_path):
+    store = ProjectStore(tmp_path / "payload-shape.db")
+    store.initialize()
+    store.create_project("p1", "Static payload shape preflight")
+    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Second")])
+    first, second = store.list_scenes("p1")
+
+    store.add_visual_object(
+        first["id"],
+        "shape",
+        name="First shape",
+        payload={"fill": "#FF0000"},
+    )
+    second_object_id = store.add_visual_object(
+        second["id"],
+        "text",
+        name="Corrupt payload text",
+        payload={"text": "Second"},
+    )
+    for scene in (first, second):
+        store.update_scene_render_settings(
+            scene["id"],
+            reveal_duration=0.0,
+            hold_duration=1.0,
+            settings={"style": "whiteboard"},
+        )
+
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_objects SET payload_json=? WHERE id=?",
+            ("[]", second_object_id),
+        )
+
+    media = FakeMediaExporter()
+    render_calls: list[tuple[str, str]] = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def video(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("video", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def whiteboard(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("whiteboard", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        video_renderer=video,
+        whiteboard_renderer=whiteboard,
+    )
+
+    with pytest.raises(
+        CompositionError,
+        match=(
+            rf"^scene {second['id']} object {second_object_id} "
+            r"payload must be a mapping$"
+        ),
+    ):
+        try:
+            exporter.export("p1", tmp_path / "never-payload-shape.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
