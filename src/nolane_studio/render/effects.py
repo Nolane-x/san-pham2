@@ -229,7 +229,9 @@ def build_render_timing_plan(
                     )
                 object_id = str(entry.get("object_id") or entry.get("id") or "").strip()
                 if not object_id:
-                    continue
+                    raise InvalidObjectTiming(
+                        f"custom timing entry {index} must identify an object"
+                    )
                 if object_id in custom_by_id:
                     if object_id in visible_ids:
                         raise InvalidObjectTiming(
