@@ -383,6 +383,14 @@ class ProjectStore:
         return normalized_kind, width_value, height_value, opacity_value
 
     @staticmethod
+    def _decode_stored_object_flag(value: Any, *, object_id: str, field: str) -> bool:
+        if type(value) is not int or value not in {0, 1}:
+            raise ValueError(
+                f"visual object {object_id} {field} must be stored as 0 or 1"
+            )
+        return bool(value)
+
+    @staticmethod
     def _touch_project_for_scene(conn: sqlite3.Connection, scene_id: str) -> None:
         row = conn.execute("SELECT project_id FROM visual_editor_scenes WHERE id=?", (scene_id,)).fetchone()
         if row is None:
@@ -469,8 +477,17 @@ class ProjectStore:
         result: list[dict[str, Any]] = []
         for row in rows:
             item = dict(row)
-            item["visible"] = bool(item["visible"])
-            item["locked"] = bool(item["locked"])
+            object_id = str(item["id"])
+            item["visible"] = self._decode_stored_object_flag(
+                item["visible"],
+                object_id=object_id,
+                field="visible",
+            )
+            item["locked"] = self._decode_stored_object_flag(
+                item["locked"],
+                object_id=object_id,
+                field="locked",
+            )
             item["payload"] = json.loads(item.pop("payload_json") or "{}")
             result.append(item)
         return result
