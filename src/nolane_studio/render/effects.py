@@ -227,7 +227,13 @@ def build_render_timing_plan(
                     raise InvalidObjectTiming(
                         f"custom timing entry {index} must be a mapping"
                     )
-                object_id = str(entry.get("object_id") or entry.get("id") or "").strip()
+                object_id_value = str(entry.get("object_id") or "").strip()
+                id_value = str(entry.get("id") or "").strip()
+                if object_id_value and id_value and object_id_value != id_value:
+                    raise InvalidObjectTiming(
+                        f"custom timing entry {index} has conflicting object identities"
+                    )
+                object_id = object_id_value or id_value
                 if not object_id:
                     raise InvalidObjectTiming(
                         f"custom timing entry {index} must identify an object"
