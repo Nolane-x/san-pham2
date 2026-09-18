@@ -25,10 +25,13 @@ def _float(
     high: float,
     *,
     field: str,
+    strict: bool = False,
 ) -> float:
     try:
         number = float(value)
     except (TypeError, ValueError):
+        if strict:
+            raise InvalidSceneDuration(f"{field} must be finite")
         number = float(default)
     if not math.isfinite(number):
         raise InvalidSceneDuration(f"{field} must be finite")
@@ -59,6 +62,7 @@ def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
             0.0,
             3600.0,
             field="reveal_duration",
+            strict="reveal_duration" in incoming,
         ),
         "hold_duration": _float(
             incoming.get("hold_duration", 1.0),
@@ -66,6 +70,7 @@ def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
             0.0,
             3600.0,
             field="hold_duration",
+            strict="hold_duration" in incoming,
         ),
         "brush_mode": str(incoming.get("brush_mode", "lr") or "lr"),
         "custom_draw_points": list(incoming.get("custom_draw_points") or []),
@@ -87,6 +92,7 @@ def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
             0.0,
             5.0,
             field="outro_duration",
+            strict="outro_duration" in incoming,
         ),
         "hand_style": str(incoming.get("hand_style", "hand-1.png") or "hand-1.png"),
         "remove_background_enabled": _truthy(incoming.get("remove_background_enabled", False)),
