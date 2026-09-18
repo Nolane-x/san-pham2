@@ -190,3 +190,84 @@ def test_project_exporter_rejects_positive_push_when_large_object_push_is_disabl
         finally:
             assert render_calls == []
             assert media.calls == []
+
+
+
+def test_project_exporter_rejects_source_video_positive_push_before_any_render(tmp_path):
+    store = ProjectStore(tmp_path / "source-video-push.db")
+    store.initialize()
+    store.create_project("p1", "Source video push preflight")
+    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Video")])
+    first, second = store.list_scenes("p1")
+
+    store.add_visual_object(
+        first["id"],
+        "shape",
+        name="First shape",
+        payload={"fill": "#FF0000"},
+    )
+    source = tmp_path / "source-push.mp4"
+    source.touch()
+    video_id = store.add_visual_object(
+        second["id"],
+        "video",
+        name="Video",
+        source=str(source),
+    )
+    store.update_scene_render_settings(
+        first["id"],
+        reveal_duration=0.25,
+        hold_duration=0.1,
+        settings={"style": "whiteboard"},
+    )
+    store.update_scene_render_settings(
+        second["id"],
+        reveal_duration=0.25,
+        hold_duration=0.1,
+        settings={
+            "style": "whiteboard",
+            "large_object_push_enabled": True,
+            "large_object_push_mode": "automatic",
+            "large_object_push_direction": "from_left",
+            "object_timing_mode": "custom",
+            "custom_object_timing_config": [
+                {"object_id": video_id, "draw": 0.25, "push": 0.2}
+            ],
+        },
+    )
+
+    media = FakeMediaExporter()
+    render_calls = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        return _touch_snapshot(plan, output)
+
+    def whiteboard(plan, output, **kwargs):
+        render_calls.append(("whiteboard", plan.scene_id))
+        return _touch_whiteboard(plan, output, **kwargs)
+
+    def video(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("video", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        whiteboard_renderer=whiteboard,
+        video_renderer=video,
+    )
+
+    with pytest.raises(
+        project_export.UnsupportedSceneRenderState,
+        match="large_object_push_enabled",
+    ):
+        try:
+            exporter.export("p1", tmp_path / "never-source-video-push.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
