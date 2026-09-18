@@ -145,3 +145,48 @@ def test_project_exporter_accepts_enabled_automatic_push_when_timing_has_positiv
         (scene["id"], [0.25], {"width": 1280, "height": 720, "fps": 24})
     ]
     assert len(media.calls) == 1
+
+
+def test_project_exporter_rejects_positive_push_when_large_object_push_is_disabled(tmp_path):
+    store, scene, object_id = _store(tmp_path)
+    store.update_scene_render_settings(
+        scene["id"],
+        reveal_duration=1.0,
+        hold_duration=0.5,
+        settings={
+            "style": "whiteboard",
+            "large_object_push_enabled": False,
+            "large_object_push_mode": "automatic",
+            "object_timing_mode": "custom",
+            "custom_object_timing_config": [
+                {"object_id": object_id, "draw": 1.0, "push": 0.25}
+            ],
+        },
+    )
+    media = FakeMediaExporter()
+    render_calls = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        return _touch_snapshot(plan, output)
+
+    def whiteboard(plan, output, **kwargs):
+        render_calls.append(("whiteboard", plan.scene_id))
+        return _touch_whiteboard(plan, output, **kwargs)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        whiteboard_renderer=whiteboard,
+    )
+
+    with pytest.raises(
+        project_export.UnsupportedSceneRenderState,
+        match="large_object_push_enabled",
+    ):
+        try:
+            exporter.export("p1", tmp_path / "never-disabled-push.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
