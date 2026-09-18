@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from .compositor import CompositionError, render_scene_layer_snapshot
+from .compositor import CompositionError, render_scene_layer_snapshot, validate_supported_static_visual_state
 from .effects import build_camera_filter_chain, normalize_ffmpeg_render_geometry
 from .exporter import build_image_segment_command, resolve_ffmpeg_exe
 from .ffmpeg import SubprocessRunner
@@ -551,6 +551,7 @@ class WhiteboardSceneCompositor:
         validate_supported_whiteboard_motion(plan)
         segments = build_whiteboard_segments(plan)
         normalize_ffmpeg_render_geometry(width, height, fps)
+        validate_supported_static_visual_state(plan)
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         objects_by_id: Mapping[str, Mapping[str, object]] = {
