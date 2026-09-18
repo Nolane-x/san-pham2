@@ -38,6 +38,14 @@ def _mapping_list(value: Any, *, field: str) -> list[Mapping[str, Any]]:
     return items
 
 
+def _config_mapping(value: Any, *, field: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise InvalidRenderConfig(f"{field} must be a mapping")
+    return dict(value)
+
+
 def _float(
     value: Any,
     default: float,
@@ -124,7 +132,10 @@ def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         "remove_background_enabled": _truthy(incoming.get("remove_background_enabled", False)),
         "auto_object_fx_enabled": _truthy(incoming.get("auto_object_fx_enabled", False)),
         "auto_object_fx_config": dict(incoming.get("auto_object_fx_config") or {}),
-        "image_motion_config": dict(incoming.get("image_motion_config") or {}),
+        "image_motion_config": _config_mapping(
+            incoming.get("image_motion_config"),
+            field="image_motion_config",
+        ),
         "batch_voice_segments": list(incoming.get("batch_voice_segments") or []),
         "extras": {k: v for k, v in incoming.items() if k not in _KNOWN},
     }
