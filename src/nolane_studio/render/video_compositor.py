@@ -28,7 +28,13 @@ def _number(value: object, default: float) -> float:
 
 
 def _finite_video_number(value: object, default: float, field: str) -> float:
-    del default
+    number = _number(value, default)
+    if not math.isfinite(number):
+        raise UnsupportedVideoComposition(f"video {field} must be finite")
+    return number
+
+
+def _strict_finite_video_number(value: object, field: str) -> float:
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -39,7 +45,7 @@ def _finite_video_number(value: object, default: float, field: str) -> float:
 
 
 def _finite_video_rotation(value: object) -> float:
-    return _finite_video_number(value, 0.0, "rotation")
+    return _strict_finite_video_number(value, "rotation")
 
 
 def _even(value: object, default: int) -> int:
@@ -73,14 +79,11 @@ def validate_supported_video_composition(plan: SceneRenderPlan) -> None:
         raise UnsupportedVideoComposition("multiple video layers are not yet supported")
 
     video = videos[0]
-    for field, default in (
-        ("x", 0.0),
-        ("y", 0.0),
-        ("width", 640.0),
-        ("height", 360.0),
-    ):
+    for field, default in (("x", 0.0), ("y", 0.0)):
         value = video[field] if field in video else default
-        _finite_video_number(value, default, field)
+        _strict_finite_video_number(value, field)
+    for field, default in (("width", 640.0), ("height", 360.0)):
+        _finite_video_number(video.get(field), default, field)
     rotation = video["rotation"] if "rotation" in video else 0.0
     _finite_video_rotation(rotation)
     validate_supported_visual_scalar_state(plan, objects=videos)
