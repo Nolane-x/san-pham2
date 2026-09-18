@@ -119,3 +119,23 @@ def test_visual_object_validation_rejects_invalid_geometry_and_kind(tmp_path):
         store.add_visual_object(scene_id, "image", height=-1)
     with pytest.raises(ValueError):
         store.add_visual_object(scene_id, "image", opacity=1.2)
+
+
+
+@pytest.mark.parametrize("field", ["visible", "locked"])
+@pytest.mark.parametrize("value", ["false", 2])
+def test_visual_object_read_rejects_non_boolean_persisted_flags(tmp_path, field, value):
+    store, scene_id = _store(tmp_path)
+    object_id = store.add_visual_object(scene_id, "shape", name="Flag integrity")
+
+    with store._connect() as conn:
+        conn.execute(
+            f"UPDATE visual_editor_objects SET {field}=? WHERE id=?",
+            (value, object_id),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^visual object {object_id} {field} must be stored as 0 or 1$",
+    ):
+        store.list_visual_objects(scene_id)
