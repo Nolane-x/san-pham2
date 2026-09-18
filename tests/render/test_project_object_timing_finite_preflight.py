@@ -803,3 +803,126 @@ def test_project_exporter_rejects_later_conflicting_custom_timing_identity_befor
         finally:
             assert render_calls == []
             assert media.calls == []
+
+
+@pytest.mark.parametrize("field", ["pause", "draw", "push"])
+def test_custom_object_timing_rejects_conflicting_phase_aliases(field):
+    entry = {
+        "object_id": "object-a",
+        field: 0.5,
+        f"{field}_seconds": 0.75,
+    }
+    with pytest.raises(
+        InvalidObjectTiming,
+        match=rf"^object object-a timing {field} aliases conflict$",
+    ):
+        build_render_timing_plan(
+            [{"id": "object-a", "visible": True}],
+            {
+                "object_timing_mode": "custom",
+                "reveal_duration": 1.0,
+                "custom_object_timing_config": [entry],
+            },
+        )
+
+
+@pytest.mark.parametrize("field", ["pause", "draw", "push"])
+def test_custom_object_timing_accepts_equivalent_phase_aliases(field):
+    entry = {
+        "object_id": "object-a",
+        field: "0.5",
+        f"{field}_seconds": 0.5,
+        f"{field}_duration": "0.5",
+    }
+    plan = build_render_timing_plan(
+        [{"id": "object-a", "visible": True}],
+        {
+            "object_timing_mode": "custom",
+            "reveal_duration": 1.0,
+            "custom_object_timing_config": [entry],
+        },
+    )
+    assert len(plan) == 1
+    assert getattr(plan[0], field) == 0.5
+
+
+def test_project_exporter_rejects_later_conflicting_timing_phase_aliases_before_any_render(
+    tmp_path,
+):
+    store = ProjectStore(tmp_path / "conflicting-timing-alias.db")
+    store.initialize()
+    store.create_project("p1", "Conflicting timing phase alias preflight")
+    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Second")])
+    first, second = store.list_scenes("p1")
+
+    first_object_id = store.add_visual_object(
+        first["id"], "shape", payload={"fill": "#FF0000"}
+    )
+    second_object_id = store.add_visual_object(
+        second["id"], "shape", payload={"fill": "#00AAFF"}
+    )
+    store.update_scene_render_settings(
+        first["id"],
+        reveal_duration=0.25,
+        hold_duration=0.1,
+        settings={
+            "style": "whiteboard",
+            "object_timing_mode": "custom",
+            "custom_object_timing_config": [
+                {"object_id": first_object_id, "draw": 0.25}
+            ],
+        },
+    )
+    store.update_scene_render_settings(
+        second["id"],
+        reveal_duration=0.25,
+        hold_duration=0.1,
+        settings={
+            "style": "whiteboard",
+            "object_timing_mode": "custom",
+            "custom_object_timing_config": [
+                {
+                    "object_id": second_object_id,
+                    "draw": 0.1,
+                    "draw_duration": 0.2,
+                }
+            ],
+        },
+    )
+
+    media = FakeMediaExporter()
+    render_calls: list[tuple[str, str]] = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def video(plan, output, **kwargs):
+        del output, kwargs
+        render_calls.append(("video", plan.scene_id))
+        raise AssertionError("video renderer must not be called")
+
+    def whiteboard(plan, output, **kwargs):
+        del output, kwargs
+        render_calls.append(("whiteboard", plan.scene_id))
+        raise AssertionError("whiteboard renderer must not be called")
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        video_renderer=video,
+        whiteboard_renderer=whiteboard,
+    )
+
+    with pytest.raises(
+        InvalidObjectTiming,
+        match=rf"^scene {second['id']} object {second_object_id} timing draw aliases conflict$",
+    ):
+        try:
+            exporter.export("p1", tmp_path / "never-conflicting-timing-alias.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
