@@ -183,6 +183,10 @@ def validate_supported_static_visual_payload(
         if kind not in _STATIC_VISUAL_KINDS:
             continue
         object_id = str(raw.get("id", "")).strip()
+        if "payload" in raw and not isinstance(raw.get("payload"), Mapping):
+            raise CompositionError(
+                f"scene {plan.scene_id} object {object_id} payload must be a mapping"
+            )
         payload = _static_payload(raw)
 
         if kind == "text":
