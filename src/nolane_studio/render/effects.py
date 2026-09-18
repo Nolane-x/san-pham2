@@ -220,9 +220,11 @@ def build_render_timing_plan(
     if mode == "custom":
         custom = config.get("custom_object_timing_config") or []
         if isinstance(custom, list):
-            for entry in custom:
+            for index, entry in enumerate(custom):
                 if not isinstance(entry, Mapping):
-                    continue
+                    raise InvalidObjectTiming(
+                        f"custom timing entry {index} must be a mapping"
+                    )
                 object_id = str(entry.get("object_id") or entry.get("id") or "").strip()
                 if not object_id:
                     continue
