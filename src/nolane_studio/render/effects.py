@@ -172,7 +172,7 @@ def _camera_action(raw: Mapping[str, Any]) -> str:
 
     candidates: list[Mapping[str, Any]] = []
     custom = config.get("custom_camera_config") or []
-    if isinstance(custom, list):
+    if config.get("custom_camera_enabled") and isinstance(custom, list):
         candidates.extend(item for item in custom if isinstance(item, Mapping))
     image_motion = config.get("image_motion_config") or {}
     if isinstance(image_motion, Mapping):
