@@ -16,6 +16,7 @@ class CompositionRequiresVideo(CompositionError):
 
 
 _STATIC_VISUAL_KINDS = frozenset({"shape", "text", "image", "drawing"})
+_SUPPORTED_VISUAL_KINDS = frozenset({*_STATIC_VISUAL_KINDS, "video"})
 _STATIC_GEOMETRY_DEFAULTS = (
     ("x", 0.0),
     ("y", 0.0),
@@ -243,6 +244,14 @@ def validate_supported_static_visual_state(
 ) -> None:
     """Preflight all recovered static-object state before any Qt rasterization."""
     candidates = plan.objects if objects is None else objects
+    for raw in candidates:
+        if not bool(raw.get("visible", True)):
+            continue
+        kind = str(raw.get("kind", "")).strip().lower()
+        if kind not in _SUPPORTED_VISUAL_KINDS:
+            raise CompositionError(
+                f"scene {plan.scene_id} contains unsupported visual object kind {kind!r}"
+            )
     validate_supported_static_visual_ordering(plan, objects=candidates)
     static_candidates = tuple(
         raw
