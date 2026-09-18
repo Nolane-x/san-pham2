@@ -245,3 +245,99 @@ def test_project_exporter_rejects_later_sequence_top_level_render_config_before_
             assert render_calls == []
             assert media.calls == []
             assert not output.exists()
+
+
+
+def test_render_config_rejects_sequence_coerced_auto_object_fx_config():
+    with pytest.raises(
+        InvalidRenderConfig,
+        match=r"^auto_object_fx_config must be a mapping$",
+    ):
+        normalize_render_config(
+            {
+                "auto_object_fx_enabled": False,
+                "auto_object_fx_config": [["mode", "wiggle"]],
+            }
+        )
+
+
+def test_project_exporter_rejects_later_sequence_auto_object_fx_config_before_any_render(
+    tmp_path,
+):
+    store = ProjectStore(tmp_path / "auto-object-fx-shape.db")
+    store.initialize()
+    store.create_project("p1", "Auto object FX shape preflight")
+    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Second")])
+    first, second = store.list_scenes("p1")
+
+    for scene, fill in ((first, "#FF0000"), (second, "#00AAFF")):
+        store.add_visual_object(
+            scene["id"],
+            "shape",
+            payload={"fill": fill},
+        )
+        store.update_scene_render_settings(
+            scene["id"],
+            reveal_duration=0.25,
+            hold_duration=0.1,
+            settings={
+                "style": "whiteboard",
+                "auto_object_fx_enabled": False,
+            },
+        )
+
+    with store._connect() as conn:
+        row = conn.execute(
+            "SELECT metadata_json FROM visual_editor_scenes WHERE id=?",
+            (second["id"],),
+        ).fetchone()
+        metadata = json.loads(row["metadata_json"] or "{}")
+        render_config = dict(metadata.get("render_config") or {})
+        render_config["auto_object_fx_enabled"] = False
+        render_config["auto_object_fx_config"] = [["mode", "wiggle"]]
+        metadata["render_config"] = render_config
+        conn.execute(
+            "UPDATE visual_editor_scenes SET metadata_json=? WHERE id=?",
+            (
+                json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
+                second["id"],
+            ),
+        )
+
+    media = RecordingMediaExporter()
+    render_calls: list[tuple[str, str]] = []
+
+    def snapshot(plan, output):
+        del output
+        render_calls.append(("snapshot", plan.scene_id))
+        raise AssertionError("snapshot renderer must not be called")
+
+    def video(plan, output, **kwargs):
+        del output, kwargs
+        render_calls.append(("video", plan.scene_id))
+        raise AssertionError("video renderer must not be called")
+
+    def whiteboard(plan, output, **kwargs):
+        del output, kwargs
+        render_calls.append(("whiteboard", plan.scene_id))
+        raise AssertionError("whiteboard renderer must not be called")
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        video_renderer=video,
+        whiteboard_renderer=whiteboard,
+    )
+    output = tmp_path / "never-auto-object-fx-shape.mp4"
+
+    with pytest.raises(
+        InvalidRenderConfig,
+        match=rf"^scene {second['id']} auto_object_fx_config must be a mapping$",
+    ):
+        try:
+            exporter.export("p1", output)
+        finally:
+            assert render_calls == []
+            assert media.calls == []
+            assert not output.exists()
