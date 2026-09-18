@@ -678,3 +678,128 @@ def test_project_exporter_rejects_later_identityless_custom_timing_before_any_re
         finally:
             assert render_calls == []
             assert media.calls == []
+
+
+def test_custom_object_timing_rejects_conflicting_object_identity_aliases():
+    with pytest.raises(
+        InvalidObjectTiming,
+        match=r"^custom timing entry 0 has conflicting object identities$",
+    ):
+        build_render_timing_plan(
+            [{"id": "object-a", "visible": True}],
+            {
+                "object_timing_mode": "custom",
+                "reveal_duration": 1.0,
+                "custom_object_timing_config": [
+                    {
+                        "object_id": "object-a",
+                        "id": "object-b",
+                        "draw": 0.5,
+                    }
+                ],
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"object_id": "object-a", "draw": 0.5},
+        {"id": "object-a", "draw": 0.5},
+        {"object_id": "object-a", "id": "object-a", "draw": 0.5},
+    ],
+)
+def test_custom_object_timing_accepts_unambiguous_object_identity_aliases(entry):
+    plan = build_render_timing_plan(
+        [{"id": "object-a", "visible": True}],
+        {
+            "object_timing_mode": "custom",
+            "reveal_duration": 1.0,
+            "custom_object_timing_config": [entry],
+        },
+    )
+    assert len(plan) == 1
+    assert plan[0].object_id == "object-a"
+    assert plan[0].draw == 0.5
+
+
+def test_project_exporter_rejects_later_conflicting_custom_timing_identity_before_any_render(
+    tmp_path,
+):
+    store = ProjectStore(tmp_path / "conflicting-timing-identity.db")
+    store.initialize()
+    store.create_project("p1", "Conflicting object timing identity preflight")
+    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Second")])
+    first, second = store.list_scenes("p1")
+
+    first_object_id = store.add_visual_object(
+        first["id"], "shape", payload={"fill": "#FF0000"}
+    )
+    second_object_id = store.add_visual_object(
+        second["id"], "shape", payload={"fill": "#00AAFF"}
+    )
+    store.update_scene_render_settings(
+        first["id"],
+        reveal_duration=0.25,
+        hold_duration=0.1,
+        settings={
+            "style": "whiteboard",
+            "object_timing_mode": "custom",
+            "custom_object_timing_config": [
+                {"object_id": first_object_id, "draw": 0.25}
+            ],
+        },
+    )
+    store.update_scene_render_settings(
+        second["id"],
+        reveal_duration=0.25,
+        hold_duration=0.1,
+        settings={
+            "style": "whiteboard",
+            "object_timing_mode": "custom",
+            "custom_object_timing_config": [
+                {
+                    "object_id": second_object_id,
+                    "id": "conflicting-object-id",
+                    "draw": 0.25,
+                }
+            ],
+        },
+    )
+
+    media = FakeMediaExporter()
+    render_calls: list[tuple[str, str]] = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def video(plan, output, **kwargs):
+        del output, kwargs
+        render_calls.append(("video", plan.scene_id))
+        raise AssertionError("video renderer must not be called")
+
+    def whiteboard(plan, output, **kwargs):
+        del output, kwargs
+        render_calls.append(("whiteboard", plan.scene_id))
+        raise AssertionError("whiteboard renderer must not be called")
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        video_renderer=video,
+        whiteboard_renderer=whiteboard,
+    )
+
+    with pytest.raises(
+        InvalidObjectTiming,
+        match=rf"^scene {second['id']} custom timing entry 0 has conflicting object identities$",
+    ):
+        try:
+            exporter.export("p1", tmp_path / "never-conflicting-identity.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
