@@ -214,6 +214,8 @@ def build_render_timing_plan(
     reveal = _nonnegative_seconds(config.get("reveal_duration"), 0.0)
     fixed_draw = reveal / len(visible)
     mode = str(config.get("object_timing_mode", "fixed") or "fixed").strip().lower()
+    if mode not in {"fixed", "custom"}:
+        raise InvalidObjectTiming("object_timing_mode must be fixed or custom")
 
     visible_ids = {str(obj["id"]).strip() for obj in visible}
     custom_by_id: dict[str, Mapping[str, Any]] = {}
