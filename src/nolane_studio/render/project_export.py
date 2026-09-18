@@ -39,6 +39,7 @@ _UNSUPPORTED_RENDER_STATE_FIELDS = (
     "custom_object_effect_config",
     "custom_object_sound_config",
     "custom_draw_points",
+    "batch_voice_segments",
 )
 
 
