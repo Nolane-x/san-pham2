@@ -89,6 +89,10 @@ def validate_supported_scene_render_state(plan: SceneRenderPlan) -> None:
 
     push_enabled = bool(plan.render_config.get("large_object_push_enabled", False))
     has_positive_push = any(entry.push > 0 for entry in plan.object_timing)
+    if has_video and has_positive_push:
+        raise UnsupportedSceneRenderState(
+            f"scene {plan.scene_id} uses unsupported persisted render state: large_object_push_enabled"
+        )
     if push_enabled != has_positive_push:
         raise UnsupportedSceneRenderState(
             f"scene {plan.scene_id} uses unsupported persisted render state: large_object_push_enabled"
