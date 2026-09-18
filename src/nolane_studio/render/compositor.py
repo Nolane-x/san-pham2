@@ -148,10 +148,10 @@ def render_scene_layer_snapshot(
 
     width = max(2, int(width))
     height = max(2, int(height))
-    output = Path(output_path)
-    output.parent.mkdir(parents=True, exist_ok=True)
     ordered = _ordered_visible(objects)
     validate_supported_static_visual_state(plan, objects=ordered)
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
 
     video_ids = [
         str(obj.get("id", ""))
