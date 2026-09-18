@@ -78,3 +78,88 @@ def test_project_exporter_preflights_later_unsupported_render_state_before_any_r
     assert second["id"] in str(exc_info.value)
     assert render_calls == []
     assert media.calls == []
+
+
+def test_project_exporter_rejects_later_batch_voice_segments_before_any_render(tmp_path):
+    store = ProjectStore(tmp_path / "batch-voice-segments.db")
+    store.initialize()
+    store.create_project("p1", "Voice state preflight")
+    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Second")])
+    first, second = store.list_scenes("p1")
+
+    store.add_visual_object(
+        first["id"],
+        "shape",
+        name="First shape",
+        payload={"fill": "#FF0000"},
+    )
+    store.add_visual_object(
+        second["id"],
+        "text",
+        name="Second text",
+        payload={"text": "Second"},
+    )
+    store.update_scene_render_settings(
+        first["id"],
+        reveal_duration=1.0,
+        hold_duration=0.5,
+        settings={"style": "whiteboard"},
+    )
+    store.update_scene_render_settings(
+        second["id"],
+        reveal_duration=1.0,
+        hold_duration=0.5,
+        settings={
+            "style": "whiteboard",
+            "batch_voice_segments": [
+                {
+                    "text": "Persisted narration",
+                    "start": 0.0,
+                    "duration": 1.0,
+                }
+            ],
+        },
+    )
+
+    media = FakeMediaExporter()
+    render_calls: list[tuple[str, str]] = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).write_bytes(b"png")
+        return Path(output)
+
+    def whiteboard(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("whiteboard", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def video(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("video", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        whiteboard_renderer=whiteboard,
+        video_renderer=video,
+    )
+
+    with pytest.raises(
+        UnsupportedSceneRenderState,
+        match="batch_voice_segments",
+    ) as exc_info:
+        try:
+            exporter.export("p1", tmp_path / "never-voice-drop.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
+
+    assert second["id"] in str(exc_info.value)
