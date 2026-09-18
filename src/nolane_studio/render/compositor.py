@@ -161,11 +161,10 @@ def validate_supported_static_visual_geometry(
         if kind not in _STATIC_VISUAL_KINDS:
             continue
         object_id = str(raw.get("id", "")).strip()
-        for field, default in _STATIC_GEOMETRY_DEFAULTS:
-            if not math.isfinite(_float(raw.get(field), default)):
-                raise CompositionError(
-                    f"scene {plan.scene_id} object {object_id} {field} must be finite"
-                )
+        for field, _default in _STATIC_GEOMETRY_DEFAULTS:
+            if field not in raw:
+                continue
+            _strict_finite_object_number(plan, raw, field)
     validate_supported_static_visual_payload(plan, objects=candidates)
 
 
@@ -186,19 +185,33 @@ def validate_supported_static_visual_payload(
         payload = _static_payload(raw)
 
         if kind == "text":
-            if not math.isfinite(_float(payload.get("font_size"), 36.0)):
-                raise CompositionError(
-                    f"scene {plan.scene_id} object {object_id} text font_size must be finite"
-                )
+            if "font_size" in payload:
+                try:
+                    font_size = float(payload.get("font_size"))
+                except (TypeError, ValueError):
+                    raise CompositionError(
+                        f"scene {plan.scene_id} object {object_id} text font_size must be finite"
+                    ) from None
+                if not math.isfinite(font_size):
+                    raise CompositionError(
+                        f"scene {plan.scene_id} object {object_id} text font_size must be finite"
+                    )
             continue
 
         if kind != "drawing":
             continue
 
-        if not math.isfinite(_float(payload.get("stroke"), 5.0)):
-            raise CompositionError(
-                f"scene {plan.scene_id} object {object_id} drawing stroke must be finite"
-            )
+        if "stroke" in payload:
+            try:
+                stroke = float(payload.get("stroke"))
+            except (TypeError, ValueError):
+                raise CompositionError(
+                    f"scene {plan.scene_id} object {object_id} drawing stroke must be finite"
+                ) from None
+            if not math.isfinite(stroke):
+                raise CompositionError(
+                    f"scene {plan.scene_id} object {object_id} drawing stroke must be finite"
+                )
 
         points = payload.get("points") or []
         if not isinstance(points, (list, tuple)):
@@ -211,7 +224,13 @@ def validate_supported_static_visual_payload(
                     f"scene {plan.scene_id} object {object_id} drawing points must be coordinate pairs"
                 )
             for axis, component in (("x", point[0]), ("y", point[1])):
-                if not math.isfinite(_float(component, 0.0)):
+                try:
+                    coordinate = float(component)
+                except (TypeError, ValueError):
+                    raise CompositionError(
+                        f"scene {plan.scene_id} object {object_id} drawing point {index} {axis} must be finite"
+                    ) from None
+                if not math.isfinite(coordinate):
                     raise CompositionError(
                         f"scene {plan.scene_id} object {object_id} drawing point {index} {axis} must be finite"
                     )
