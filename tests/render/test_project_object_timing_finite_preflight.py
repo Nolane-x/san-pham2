@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from nolane_studio.domain import Scene
-from nolane_studio.render.effects import ObjectTimingEntry
+from nolane_studio.render.effects import InvalidObjectTiming, ObjectTimingEntry, build_render_timing_plan
 from nolane_studio.render.project_export import ProjectSceneExporter
 from nolane_studio.storage.store import ProjectStore
 
@@ -165,6 +165,93 @@ def test_project_exporter_rejects_later_nonfinite_custom_timing_before_any_rende
     ):
         try:
             exporter.export("p1", tmp_path / "never.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
+
+
+@pytest.mark.parametrize("field", ["pause", "draw", "push"])
+def test_custom_object_timing_rejects_malformed_present_value(field):
+    raw = {"object_id": "object-a", "pause": 0.0, "draw": 0.5, "push": 0.0}
+    raw[field] = "oops"
+
+    with pytest.raises(
+        InvalidObjectTiming,
+        match=rf"^object object-a timing {field} must be finite$",
+    ):
+        build_render_timing_plan(
+            [{"id": "object-a", "visible": True}],
+            {
+                "object_timing_mode": "custom",
+                "reveal_duration": 0.5,
+                "custom_object_timing_config": [raw],
+            },
+        )
+
+
+def test_custom_object_timing_preserves_numeric_strings():
+    plan = build_render_timing_plan(
+        [{"id": "object-a", "visible": True}],
+        {
+            "object_timing_mode": "custom",
+            "reveal_duration": 4.0,
+            "custom_object_timing_config": [
+                {
+                    "object_id": "object-a",
+                    "pause": "0.25",
+                    "draw": "1.5",
+                    "push": "0.75",
+                }
+            ],
+        },
+    )
+
+    assert [(entry.pause, entry.draw, entry.push) for entry in plan] == [(0.25, 1.5, 0.75)]
+
+
+@pytest.mark.parametrize("field", ["pause", "draw", "push"])
+def test_project_exporter_rejects_later_malformed_custom_timing_before_any_render(
+    tmp_path,
+    field,
+):
+    store, second_scene_id, second_object_id = _store_with_later_nonfinite_timing(
+        tmp_path,
+        field=field,
+        value="oops",
+    )
+    media = FakeMediaExporter()
+    render_calls: list[tuple[str, str]] = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def video(plan, output, **kwargs):
+        del output, kwargs
+        render_calls.append(("video", plan.scene_id))
+        raise AssertionError("video renderer must not be called")
+
+    def whiteboard(plan, output, **kwargs):
+        del output, kwargs
+        render_calls.append(("whiteboard", plan.scene_id))
+        raise AssertionError("whiteboard renderer must not be called")
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        video_renderer=video,
+        whiteboard_renderer=whiteboard,
+    )
+
+    with pytest.raises(
+        InvalidObjectTiming,
+        match=rf"^scene {second_scene_id} object {second_object_id} timing {field} must be finite$",
+    ):
+        try:
+            exporter.export("p1", tmp_path / "never-malformed.mp4")
         finally:
             assert render_calls == []
             assert media.calls == []
