@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from .compositor import CompositionError, render_scene_layer_snapshot, validate_supported_static_visual_state
+from .compositor import CompositionError, render_scene_layer_snapshot, validate_supported_static_visual_ordering, validate_supported_static_visual_state
 from .effects import normalize_ffmpeg_render_geometry
 from .exporter import probe_has_audio, resolve_ffmpeg_exe
 from .ffmpeg import SubprocessRunner
@@ -52,6 +52,7 @@ def _visible_objects(plan: SceneRenderPlan) -> list[dict[str, object]]:
 
 def validate_supported_video_composition(plan: SceneRenderPlan) -> None:
     """Reject video-layer topology the current compositor cannot preserve faithfully."""
+    validate_supported_static_visual_ordering(plan)
     videos = [
         obj
         for obj in _visible_objects(plan)
