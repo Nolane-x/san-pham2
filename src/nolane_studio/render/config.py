@@ -18,6 +18,18 @@ class InvalidSceneDuration(ValueError):
     """Raised when persisted scene timing cannot form a finite duration."""
 
 
+class InvalidRenderConfig(ValueError):
+    """Raised when persisted render configuration has an invalid shape."""
+
+
+def _config_list(value: Any, *, field: str) -> list[Any]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise InvalidRenderConfig(f"{field} must be a list")
+    return list(value)
+
+
 def _float(
     value: Any,
     default: float,
@@ -83,7 +95,10 @@ def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         "custom_camera_enabled": _truthy(incoming.get("custom_camera_enabled", False)),
         "custom_camera_config": list(incoming.get("custom_camera_config") or []),
         "object_timing_mode": str(incoming.get("object_timing_mode", "fixed") or "fixed"),
-        "custom_object_timing_config": list(incoming.get("custom_object_timing_config") or []),
+        "custom_object_timing_config": _config_list(
+            incoming.get("custom_object_timing_config"),
+            field="custom_object_timing_config",
+        ),
         "outro_enabled": _truthy(incoming.get("outro_enabled", False)),
         "outro_direction": str(incoming.get("outro_direction", "left") or "left"),
         "outro_duration": _float(
