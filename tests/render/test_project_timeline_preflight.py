@@ -107,3 +107,71 @@ def test_project_exporter_preflights_invalid_media_order_before_any_render(tmp_p
 
     assert render_calls == []
     assert media.calls == []
+
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("clips", []),
+        ("videoClips", {}),
+        ("audioClips", {}),
+        ("mediaOrder", {}),
+    ],
+    ids=[
+        "clips-must-be-mapping",
+        "video-clips-must-be-list",
+        "audio-clips-must-be-list",
+        "media-order-must-be-list",
+    ],
+)
+def test_project_exporter_rejects_empty_wrong_shape_timeline_bucket_before_any_render(
+    tmp_path,
+    field,
+    value,
+):
+    store, _first, _second = _store(tmp_path)
+    state = {
+        "clips": {},
+        "videoClips": [],
+        "audioClips": [],
+        "mediaOrder": [],
+    }
+    state[field] = value
+    store.save_timeline("p1", state)
+
+    media = FakeMediaExporter()
+    render_calls = []
+
+    with pytest.raises(UnsupportedProjectTimeline, match=field):
+        _exporter(store, media, render_calls).export(
+            "p1",
+            tmp_path / f"never-{field}.mp4",
+        )
+
+    assert render_calls == []
+    assert media.calls == []
+
+
+def test_project_exporter_accepts_empty_timeline_buckets_with_canonical_shapes(tmp_path):
+    store, _first, _second = _store(tmp_path)
+    store.save_timeline(
+        "p1",
+        {
+            "clips": {},
+            "videoClips": [],
+            "audioClips": [],
+            "mediaOrder": [],
+        },
+    )
+    media = FakeMediaExporter()
+    render_calls = []
+
+    result = _exporter(store, media, render_calls).export(
+        "p1",
+        tmp_path / "canonical-empty-timeline.mp4",
+    )
+
+    assert result == tmp_path / "canonical-empty-timeline.mp4"
+    assert render_calls != []
+    assert len(media.calls) == 1
