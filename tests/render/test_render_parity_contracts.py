@@ -72,3 +72,35 @@ def test_custom_timing_missing_entry_fails_safe_to_fixed_share():
 
     assert plan[0].draw == 1.0
     assert plan[1].draw == 2.0
+
+
+
+def test_disabled_custom_camera_config_does_not_override_image_motion_config():
+    profile = effects.render_profile_from_config(
+        {
+            "style": "whiteboard",
+            "visual_mode": "camera_motion",
+            "reveal_duration": 2.0,
+            "hold_duration": 1.0,
+            "custom_camera_enabled": False,
+            "custom_camera_config": [{"action": "pan_left"}],
+            "image_motion_config": {"action": "pan_right"},
+        }
+    )
+
+    assert profile.camera == "pan_right"
+
+
+def test_disabled_custom_camera_config_falls_back_to_default_camera_motion():
+    profile = effects.render_profile_from_config(
+        {
+            "style": "whiteboard",
+            "visual_mode": "camera_motion",
+            "reveal_duration": 2.0,
+            "hold_duration": 1.0,
+            "custom_camera_enabled": False,
+            "custom_camera_config": [{"action": "pan_left"}],
+        }
+    )
+
+    assert profile.camera == "slow_zoom"
