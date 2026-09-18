@@ -200,3 +200,32 @@ def test_project_exporter_rejects_duplicate_persisted_scene_positions_before_any
             assert render_calls == []
             assert media.calls == []
             assert not output.exists()
+
+
+
+def test_project_exporter_rejects_blank_persisted_scene_id_before_any_render(tmp_path):
+    store, _first, second = _store(tmp_path)
+    with store._connect() as conn:
+        conn.execute(
+            "DELETE FROM visual_editor_objects WHERE scene_id=?",
+            (second["id"],),
+        )
+        conn.execute(
+            "UPDATE visual_editor_scenes SET id='   ' WHERE id=?",
+            (second["id"],),
+        )
+
+    media = FakeMediaExporter()
+    render_calls = []
+    output = tmp_path / "never-blank-scene-id.mp4"
+
+    with pytest.raises(
+        UnsupportedProjectTimeline,
+        match=r"^scene id must not be blank$",
+    ):
+        try:
+            _exporter(store, media, render_calls).export("p1", output)
+        finally:
+            assert render_calls == []
+            assert media.calls == []
+            assert not output.exists()
