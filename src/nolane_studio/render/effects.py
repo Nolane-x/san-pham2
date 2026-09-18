@@ -215,6 +215,7 @@ def build_render_timing_plan(
     fixed_draw = reveal / len(visible)
     mode = str(config.get("object_timing_mode", "fixed") or "fixed").strip().lower()
 
+    visible_ids = {str(obj["id"]).strip() for obj in visible}
     custom_by_id: dict[str, Mapping[str, Any]] = {}
     if mode == "custom":
         custom = config.get("custom_object_timing_config") or []
@@ -223,8 +224,15 @@ def build_render_timing_plan(
                 if not isinstance(entry, Mapping):
                     continue
                 object_id = str(entry.get("object_id") or entry.get("id") or "").strip()
-                if object_id and object_id not in custom_by_id:
-                    custom_by_id[object_id] = entry
+                if not object_id:
+                    continue
+                if object_id in custom_by_id:
+                    if object_id in visible_ids:
+                        raise InvalidObjectTiming(
+                            f"duplicate timing config for object {object_id}"
+                        )
+                    continue
+                custom_by_id[object_id] = entry
 
     plan: list[ObjectTimingEntry] = []
     cursor = 0.0
