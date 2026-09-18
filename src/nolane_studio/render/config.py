@@ -73,7 +73,12 @@ def _truthy(value: Any) -> bool:
 
 
 def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
-    incoming = dict(raw or {})
+    if raw is None:
+        incoming: dict[str, Any] = {}
+    elif not isinstance(raw, Mapping):
+        raise InvalidRenderConfig("render_config must be a mapping")
+    else:
+        incoming = dict(raw)
     visual_mode = str(incoming.get("visual_mode", "drawing") or "drawing").strip().lower()
     if visual_mode not in {"drawing", "camera_motion"}:
         visual_mode = "drawing"
