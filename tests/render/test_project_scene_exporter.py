@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pytest
 
@@ -412,7 +413,7 @@ def test_project_media_preflight_rejects_existing_undecodable_image(tmp_path):
         CompositionError,
         match=(
             rf"^scene {second['id']} object {object_id} "
-            rf"unable to decode scene image: {corrupt}$"
+            rf"unable to decode scene image: {re.escape(str(corrupt))}$"
         ),
     ):
         project_export.validate_project_scene_media(plans)
@@ -445,7 +446,7 @@ def test_project_exporter_rejects_later_undecodable_image_before_any_render(tmp_
         CompositionError,
         match=(
             rf"^scene {second['id']} object {object_id} "
-            rf"unable to decode scene image: {corrupt}$"
+            rf"unable to decode scene image: {re.escape(str(corrupt))}$"
         ),
     ):
         try:
