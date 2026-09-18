@@ -87,11 +87,13 @@ def _plan(objects):
         ("width", -1.0, "width must be > 0"),
         ("height", 0.0, "height must be > 0"),
         ("height", -1.0, "height must be > 0"),
+        ("width", "oops", "width must be finite"),
         ("opacity", float("inf"), "opacity must be finite"),
         ("opacity", float("-inf"), "opacity must be finite"),
         ("opacity", float("nan"), "opacity must be finite"),
         ("opacity", -0.01, "opacity must be within 0..1"),
         ("opacity", 1.01, "opacity must be within 0..1"),
+        ("opacity", "oops", "opacity must be finite"),
     ],
 )
 def test_static_state_rejects_invalid_persisted_scalar_domain(field, value, message):
@@ -151,10 +153,12 @@ def test_layer_snapshot_rejects_invalid_scalar_before_output_side_effect(tmp_pat
     [
         ("width", 0.0, "width must be > 0"),
         ("height", -1.0, "height must be > 0"),
+        ("width", "oops", "width must be finite"),
         ("opacity", float("inf"), "opacity must be finite"),
         ("opacity", float("nan"), "opacity must be finite"),
         ("opacity", -0.1, "opacity must be within 0..1"),
         ("opacity", 1.1, "opacity must be within 0..1"),
+        ("opacity", "oops", "opacity must be finite"),
     ],
 )
 def test_video_composition_rejects_invalid_scalar_domain(tmp_path, field, value, message):
