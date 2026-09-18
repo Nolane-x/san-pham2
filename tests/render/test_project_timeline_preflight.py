@@ -175,3 +175,28 @@ def test_project_exporter_accepts_empty_timeline_buckets_with_canonical_shapes(t
     assert result == tmp_path / "canonical-empty-timeline.mp4"
     assert render_calls != []
     assert len(media.calls) == 1
+
+
+
+def test_project_exporter_rejects_duplicate_persisted_scene_positions_before_any_render(tmp_path):
+    store, _first, second = _store(tmp_path)
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_scenes SET position=0 WHERE id=?",
+            (second["id"],),
+        )
+
+    media = FakeMediaExporter()
+    render_calls = []
+    output = tmp_path / "never-duplicate-scene-position.mp4"
+
+    with pytest.raises(
+        UnsupportedProjectTimeline,
+        match=r"^scene position 0 must be unique$",
+    ):
+        try:
+            _exporter(store, media, render_calls).export("p1", output)
+        finally:
+            assert render_calls == []
+            assert media.calls == []
+            assert not output.exists()
