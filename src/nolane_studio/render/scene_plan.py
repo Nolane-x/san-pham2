@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 
-from .config import InvalidSceneDuration, normalize_render_config
+from .config import InvalidRenderConfig, InvalidSceneDuration, normalize_render_config
 from .effects import (
     InvalidObjectTiming,
     ObjectTimingEntry,
@@ -61,6 +61,8 @@ def build_scene_render_plan(store: ScenePlanStore, project_id: str) -> list[Scen
             settings = store.get_scene_render_settings(scene_id)
             render_config = normalize_render_config(settings)
             profile = render_profile_from_config(render_config)
+        except InvalidRenderConfig as exc:
+            raise InvalidRenderConfig(f"scene {scene_id} {exc}") from exc
         except InvalidSceneDuration as exc:
             raise InvalidSceneDuration(f"scene {scene_id} {exc}") from exc
         objects = tuple(
