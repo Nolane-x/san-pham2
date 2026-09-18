@@ -93,7 +93,10 @@ def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         "custom_object_effect_config": list(incoming.get("custom_object_effect_config") or []),
         "custom_object_sound_config": list(incoming.get("custom_object_sound_config") or []),
         "custom_camera_enabled": _truthy(incoming.get("custom_camera_enabled", False)),
-        "custom_camera_config": list(incoming.get("custom_camera_config") or []),
+        "custom_camera_config": _config_list(
+            incoming.get("custom_camera_config"),
+            field="custom_camera_config",
+        ),
         "object_timing_mode": str(incoming.get("object_timing_mode", "fixed") or "fixed"),
         "custom_object_timing_config": _config_list(
             incoming.get("custom_object_timing_config"),
