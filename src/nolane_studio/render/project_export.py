@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
-from .compositor import render_scene_snapshot, validate_supported_static_visual_geometry
+from .compositor import render_scene_snapshot, validate_supported_static_visual_state
 from .effects import normalize_ffmpeg_render_geometry
 from .exporter import ExportClip, MediaExporter
 from .scene_plan import ScenePlanStore, SceneRenderPlan, build_scene_render_plan
@@ -103,7 +103,7 @@ def validate_project_scene_render_state(plans: Sequence[SceneRenderPlan]) -> Non
 def validate_project_scene_composition(plans: Sequence[SceneRenderPlan]) -> None:
     """Preflight scene compositions and recovered motion before any renderer starts."""
     for plan in plans:
-        validate_supported_static_visual_geometry(plan)
+        validate_supported_static_visual_state(plan)
         has_video = any(
             str(obj.get("kind", "")).strip().lower() == "video"
             and bool(obj.get("visible", True))
