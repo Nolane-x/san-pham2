@@ -424,8 +424,11 @@ def test_project_exporter_rejects_later_undecodable_image_before_any_render(tmp_
     render_calls = []
 
     def snapshot(plan, output):
+        del output
         render_calls.append(("snapshot", plan.scene_id))
-        return project_export.render_scene_snapshot(plan, output)
+        raise CompositionError(
+            f"scene {plan.scene_id} object {object_id} unable to decode scene image: {corrupt}"
+        )
 
     def whiteboard(plan, output, **kwargs):
         render_calls.append(("whiteboard", plan.scene_id))
