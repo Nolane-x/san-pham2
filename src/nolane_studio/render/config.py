@@ -30,6 +30,14 @@ def _config_list(value: Any, *, field: str) -> list[Any]:
     return list(value)
 
 
+def _mapping_list(value: Any, *, field: str) -> list[Mapping[str, Any]]:
+    items = _config_list(value, field=field)
+    for index, item in enumerate(items):
+        if not isinstance(item, Mapping):
+            raise InvalidRenderConfig(f"{field} entry {index} must be a mapping")
+    return items
+
+
 def _float(
     value: Any,
     default: float,
@@ -93,7 +101,7 @@ def normalize_render_config(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         "custom_object_effect_config": list(incoming.get("custom_object_effect_config") or []),
         "custom_object_sound_config": list(incoming.get("custom_object_sound_config") or []),
         "custom_camera_enabled": _truthy(incoming.get("custom_camera_enabled", False)),
-        "custom_camera_config": _config_list(
+        "custom_camera_config": _mapping_list(
             incoming.get("custom_camera_config"),
             field="custom_camera_config",
         ),
