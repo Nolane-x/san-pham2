@@ -28,7 +28,11 @@ def _number(value: object, default: float) -> float:
 
 
 def _finite_video_number(value: object, default: float, field: str) -> float:
-    number = _number(value, default)
+    del default
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise UnsupportedVideoComposition(f"video {field} must be finite") from None
     if not math.isfinite(number):
         raise UnsupportedVideoComposition(f"video {field} must be finite")
     return number
@@ -75,8 +79,10 @@ def validate_supported_video_composition(plan: SceneRenderPlan) -> None:
         ("width", 640.0),
         ("height", 360.0),
     ):
-        _finite_video_number(video.get(field), default, field)
-    _finite_video_rotation(video.get("rotation"))
+        value = video[field] if field in video else default
+        _finite_video_number(value, default, field)
+    rotation = video["rotation"] if "rotation" in video else 0.0
+    _finite_video_rotation(rotation)
     validate_supported_visual_scalar_state(plan, objects=videos)
 
 
