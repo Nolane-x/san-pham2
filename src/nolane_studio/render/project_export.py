@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from .compositor import render_scene_snapshot, validate_supported_static_visual_geometry
+from .effects import normalize_ffmpeg_render_geometry
 from .exporter import ExportClip, MediaExporter
 from .scene_plan import ScenePlanStore, SceneRenderPlan, build_scene_render_plan
 from .video_compositor import SceneVideoCompositor, validate_supported_video_composition
@@ -252,6 +253,7 @@ class ProjectSceneExporter:
             [plan.scene_id for plan in plans],
             timeline_state,
         )
+        normalize_ffmpeg_render_geometry(width, height, fps)
 
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
