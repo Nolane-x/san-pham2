@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from nolane_studio.domain import Scene
-from nolane_studio.render.config import InvalidRenderConfig, normalize_render_config
+from nolane_studio.render.config import normalize_render_config
 from nolane_studio.render.project_export import ProjectSceneExporter
 from nolane_studio.storage.store import ProjectStore
 
@@ -23,7 +23,7 @@ class RecordingMediaExporter:
 
 def test_render_config_rejects_mapping_custom_object_timing_config():
     with pytest.raises(
-        InvalidRenderConfig,
+        ValueError,
         match=r"^custom_object_timing_config must be a list$",
     ):
         normalize_render_config(
@@ -141,7 +141,7 @@ def test_project_exporter_rejects_later_mapping_custom_timing_before_any_render(
     output = tmp_path / "never-structured-config.mp4"
 
     with pytest.raises(
-        InvalidRenderConfig,
+        ValueError,
         match=rf"^scene {second_scene_id} custom_object_timing_config must be a list$",
     ):
         try:
