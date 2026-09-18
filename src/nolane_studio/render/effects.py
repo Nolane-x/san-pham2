@@ -143,16 +143,26 @@ def normalize_ffmpeg_render_geometry(
 
 
 def _timing_value(raw: Mapping[str, Any], name: str, default: float) -> float:
+    values: list[float] = []
     for key in (name, f"{name}_seconds", f"{name}_duration"):
-        if key in raw:
-            try:
-                number = float(raw.get(key))
-            except (TypeError, ValueError):
-                raise InvalidObjectTiming(f"timing {name} must be finite")
-            if not math.isfinite(number):
-                raise InvalidObjectTiming(f"timing {name} must be finite")
-            return max(0.0, number)
-    return _nonnegative_seconds(default)
+        if key not in raw:
+            continue
+        try:
+            number = float(raw.get(key))
+        except (TypeError, ValueError):
+            raise InvalidObjectTiming(f"timing {name} must be finite")
+        if not math.isfinite(number):
+            raise InvalidObjectTiming(f"timing {name} must be finite")
+        values.append(max(0.0, number))
+    if not values:
+        return _nonnegative_seconds(default)
+    canonical = values[0]
+    if any(
+        not math.isclose(value, canonical, rel_tol=1e-12, abs_tol=1e-12)
+        for value in values[1:]
+    ):
+        raise InvalidObjectTiming(f"timing {name} aliases conflict")
+    return canonical
 
 
 def _camera_action(raw: Mapping[str, Any]) -> str:
