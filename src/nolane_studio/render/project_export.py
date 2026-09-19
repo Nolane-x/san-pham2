@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
@@ -312,6 +314,143 @@ class SceneMediaExporter(Protocol):
     ) -> Path: ...
 
 
+def validate_persisted_scene_edits(
+    clip_durations: Mapping[str, float],
+    state: Mapping[str, Any] | None,
+) -> dict[str, tuple[float, float, float, float]]:
+    """Decode rebuild-owned scene clip edits without interpreting legacy track payloads."""
+    raw = dict(state or {}).get("sceneEdits", [])
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list):
+        raise UnsupportedProjectTimeline("sceneEdits must be a list")
+
+    durations: dict[str, float] = {}
+    for raw_id, raw_duration in clip_durations.items():
+        scene_id = str(raw_id).strip()
+        if not scene_id:
+            raise UnsupportedProjectTimeline("scene edit source id must not be blank")
+        try:
+            duration = float(raw_duration)
+        except (TypeError, ValueError, OverflowError):
+            raise UnsupportedProjectTimeline(
+                f"scene {scene_id} duration must be finite"
+            ) from None
+        if not math.isfinite(duration) or duration <= 0:
+            raise UnsupportedProjectTimeline(
+                f"scene {scene_id} duration must be finite and > 0"
+            )
+        durations[scene_id] = duration
+
+    edits: dict[str, tuple[float, float, float, float]] = {}
+    for index, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            raise UnsupportedProjectTimeline(
+                f"sceneEdits entry {index} must be a mapping"
+            )
+        scene_id = str(item.get("scene_id", "")).strip()
+        if not scene_id:
+            raise UnsupportedProjectTimeline(
+                f"sceneEdits entry {index} scene_id must not be blank"
+            )
+        if scene_id not in durations:
+            raise UnsupportedProjectTimeline(
+                f"sceneEdits entry {index} references unknown scene: {scene_id}"
+            )
+        if scene_id in edits:
+            raise UnsupportedProjectTimeline(
+                f"sceneEdits contains duplicate scene_id: {scene_id}"
+            )
+
+        try:
+            trim_start = float(item.get("trim_start", 0.0))
+        except (TypeError, ValueError, OverflowError):
+            raise UnsupportedProjectTimeline(
+                f"scene {scene_id} trim_start must be finite"
+            ) from None
+        try:
+            raw_end = item.get("trim_end", durations[scene_id])
+            trim_end = durations[scene_id] if raw_end is None else float(raw_end)
+        except (TypeError, ValueError, OverflowError):
+            raise UnsupportedProjectTimeline(
+                f"scene {scene_id} trim_end must be finite"
+            ) from None
+        try:
+            speed = float(item.get("speed", 1.0))
+        except (TypeError, ValueError, OverflowError):
+            raise UnsupportedProjectTimeline(
+                f"scene {scene_id} speed must be finite and > 0"
+            ) from None
+
+        if not math.isfinite(trim_start) or trim_start < 0:
+            raise UnsupportedProjectTimeline(
+                f"scene {scene_id} trim_start must be finite and >= 0"
+            )
+        if not math.isfinite(trim_end) or trim_end <= trim_start:
+            raise UnsupportedProjectTimeline(
+                f"scene {scene_id} trim_end must be finite and greater than trim_start"
+            )
+        source_duration = durations[scene_id]
+        if trim_end > source_duration:
+            raise UnsupportedProjectTimeline(
+                f"scene {scene_id} trim_end must not exceed scene duration {source_duration:.6f}"
+            )
+        if not math.isfinite(speed) or speed <= 0:
+            raise UnsupportedProjectTimeline(
+                f"scene {scene_id} speed must be finite and > 0"
+            )
+
+        effective = (trim_end - trim_start) / speed
+        if not math.isfinite(effective) or effective <= 0:
+            raise UnsupportedProjectTimeline(
+                f"scene {scene_id} edited duration must be finite and > 0"
+            )
+        edits[scene_id] = (trim_start, trim_end, speed, effective)
+    return edits
+
+
+def apply_persisted_scene_edits(
+    clips: Sequence[ExportClip],
+    state: Mapping[str, Any] | None,
+) -> list[ExportClip]:
+    """Apply explicit scene-level trim/speed after render and before assembly."""
+    clip_list = list(clips)
+    durations: dict[str, float] = {}
+    for clip in clip_list:
+        clip_id = str(clip.clip_id).strip()
+        if not clip_id:
+            raise UnsupportedProjectTimeline(
+                "scene clip id must not be blank before applying sceneEdits"
+            )
+        if clip_id in durations:
+            raise UnsupportedProjectTimeline(
+                f"scene clip id must be unique before applying sceneEdits: {clip_id}"
+            )
+        durations[clip_id] = float(clip.duration)
+
+    edits = validate_persisted_scene_edits(durations, state)
+    if not edits:
+        return clip_list
+
+    result: list[ExportClip] = []
+    for clip in clip_list:
+        edit = edits.get(clip.clip_id)
+        if edit is None:
+            result.append(clip)
+            continue
+        trim_start, trim_end, speed, effective = edit
+        result.append(
+            replace(
+                clip,
+                duration=effective,
+                trim_start=trim_start,
+                trim_end=trim_end,
+                speed=speed,
+            )
+        )
+    return result
+
+
 def apply_persisted_timeline_state(
     clips: Sequence[ExportClip],
     state: Mapping[str, Any] | None,
@@ -392,6 +531,10 @@ class ProjectSceneExporter:
         timeline_state = self.store.load_timeline(project_id)
         scene_ids = [plan.scene_id for plan in plans]
         validate_persisted_timeline_state(scene_ids, timeline_state)
+        validate_persisted_scene_edits(
+            {plan.scene_id: plan.total_duration for plan in plans},
+            timeline_state,
+        )
         media_order = timeline_state.get("mediaOrder", [])
         ordered_scene_ids = (
             [str(item).strip() for item in media_order]
@@ -480,6 +623,7 @@ class ProjectSceneExporter:
                     )
                 )
 
+            clips = apply_persisted_scene_edits(clips, timeline_state)
             clips = apply_persisted_timeline_state(clips, timeline_state)
             export_kwargs: dict[str, object] = {
                 "width": width,
