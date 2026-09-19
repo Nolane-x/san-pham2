@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from nolane_studio.domain import Scene
@@ -164,3 +166,56 @@ def test_studio_object_transform_and_delete_remain_persisted_after_layer_refresh
 
     page._delete_selected_object()
     assert len(store.list_visual_objects(scenes[0]["id"])) == 1
+
+def _canvas_model(*, object_id="shape-1", z_index=0, payload=None):
+    return {
+        "id": object_id,
+        "kind": "shape",
+        "name": "Shape",
+        "x": 20,
+        "y": 30,
+        "width": 400,
+        "height": 220,
+        "rotation": 0,
+        "opacity": 1,
+        "visible": True,
+        "locked": False,
+        "z_index": z_index,
+        "payload": {"fill": "#ffffff"} if payload is None else payload,
+    }
+
+
+def test_canvas_editor_rejects_fractional_z_index_before_replacing_existing_state():
+    _qt_app()
+    from nolane_studio.ui.widgets import CanvasEditor
+
+    canvas = CanvasEditor()
+    canvas.set_objects([_canvas_model(object_id="stable")])
+
+    with pytest.raises(
+        ValueError,
+        match=r"^visual object bad-z z_index must be a non-negative integer$",
+    ):
+        canvas.set_objects([_canvas_model(object_id="bad-z", z_index=0.5)])
+
+    assert canvas.object_ids() == ["stable"]
+    assert canvas.object_count() == 1
+
+
+@pytest.mark.parametrize("payload", [[], [["fill", "#ffffff"]]])
+def test_canvas_editor_rejects_non_mapping_payload_before_replacing_existing_state(payload):
+    _qt_app()
+    from nolane_studio.ui.widgets import CanvasEditor
+
+    canvas = CanvasEditor()
+    canvas.set_objects([_canvas_model(object_id="stable")])
+
+    with pytest.raises(
+        ValueError,
+        match=r"^visual object bad-payload payload must be a mapping$",
+    ):
+        canvas.set_objects([_canvas_model(object_id="bad-payload", payload=payload)])
+
+    assert canvas.object_ids() == ["stable"]
+    assert canvas.object_count() == 1
+
