@@ -45,6 +45,11 @@ class ProjectStore:
                     "ALTER TABLE visual_editor_timeline_state "
                     "ADD COLUMN transitions_json TEXT NOT NULL DEFAULT '[]'"
                 )
+            if "scene_edits_json" not in timeline_columns:
+                conn.execute(
+                    "ALTER TABLE visual_editor_timeline_state "
+                    "ADD COLUMN scene_edits_json TEXT NOT NULL DEFAULT '[]'"
+                )
             # Old builds used cleanup timers. A local desktop project is durable.
             conn.execute("UPDATE batch_projects SET cleanup_after=NULL, source_cleanup_after=NULL")
 
@@ -891,29 +896,33 @@ class ProjectStore:
         audio = state.get("audioClips", [])
         order = state.get("mediaOrder", [])
         transitions = state.get("transitions", [])
+        scene_edits = state.get("sceneEdits", [])
         if not isinstance(transitions, list):
             raise ValueError("transitions must be a list")
+        if not isinstance(scene_edits, list):
+            raise ValueError("sceneEdits must be a list")
         with self._connect() as conn:
             if conn.execute("SELECT 1 FROM batch_projects WHERE id=?", (project_id,)).fetchone() is None:
                 raise KeyError(project_id)
             conn.execute(
                 """INSERT INTO visual_editor_timeline_state(
                        project_id,user_google_id,clips_json,video_clips_json,audio_clips_json,
-                       media_order_json,transitions_json,revision
-                   ) VALUES(?, 'local', ?, ?, ?, ?, ?, 1)
+                       media_order_json,transitions_json,scene_edits_json,revision
+                   ) VALUES(?, 'local', ?, ?, ?, ?, ?, ?, 1)
                    ON CONFLICT(project_id) DO UPDATE SET
                      clips_json=excluded.clips_json,
                      video_clips_json=excluded.video_clips_json,
                      audio_clips_json=excluded.audio_clips_json,
                      media_order_json=excluded.media_order_json,
                      transitions_json=excluded.transitions_json,
+                     scene_edits_json=excluded.scene_edits_json,
                      revision=visual_editor_timeline_state.revision+1,
                      updated_at=CURRENT_TIMESTAMP""",
                 tuple(
                     [project_id]
                     + [
                         json.dumps(v, ensure_ascii=False, separators=(",", ":"))
-                        for v in (clips, video, audio, order, transitions)
+                        for v in (clips, video, audio, order, transitions, scene_edits)
                     ]
                 ),
             )
@@ -934,4 +943,7 @@ class ProjectStore:
         transitions = json.loads(row["transitions_json"])
         if transitions:
             result["transitions"] = transitions
+        scene_edits = json.loads(row["scene_edits_json"])
+        if scene_edits:
+            result["sceneEdits"] = scene_edits
         return result
