@@ -382,6 +382,18 @@ class ProjectStore:
             raise ValueError("opacity must be within 0..1")
         return normalized_kind, width_value, height_value, opacity_value
 
+    @classmethod
+    def _decode_stored_object_kind(cls, value: Any, *, object_id: str) -> Any:
+        raw = str(value)
+        canonical = raw.strip().lower()
+        if canonical in cls._VISUAL_OBJECT_KINDS and raw != canonical:
+            allowed = ", ".join(sorted(cls._VISUAL_OBJECT_KINDS))
+            raise ValueError(
+                f"visual object {object_id} kind must be stored canonically as one of: {allowed}"
+            )
+        return value
+
+
     @staticmethod
     def _decode_stored_object_flag(value: Any, *, object_id: str, field: str) -> bool:
         if type(value) is not int or value not in {0, 1}:
@@ -478,6 +490,10 @@ class ProjectStore:
         for row in rows:
             item = dict(row)
             object_id = str(item["id"])
+            item["kind"] = self._decode_stored_object_kind(
+                item["kind"],
+                object_id=object_id,
+            )
             item["visible"] = self._decode_stored_object_flag(
                 item["visible"],
                 object_id=object_id,
