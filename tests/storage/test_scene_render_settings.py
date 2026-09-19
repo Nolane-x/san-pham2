@@ -94,3 +94,10 @@ def test_scene_render_settings_read_rejects_non_mapping_persisted_metadata(tmp_p
     ):
         store.get_scene_render_settings(scene_id)
 
+@pytest.mark.parametrize("settings", [[], [["style", "static"]]])
+def test_scene_render_settings_writer_rejects_non_mapping_settings(tmp_path, settings):
+    store, scene_id = _scene(tmp_path)
+
+    with pytest.raises(ValueError, match=r"^settings must be a mapping$"):
+        store.update_scene_render_settings(scene_id, settings=settings)
+
