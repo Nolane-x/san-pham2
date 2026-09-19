@@ -100,7 +100,19 @@ class ImageGenerationService:
         }
         objects = self.store.list_visual_objects(scene_id)
         stored_id = str(metadata.get("image_object_id") or "").strip()
-        target = next((item for item in objects if item["id"] == stored_id), None)
+        stored_target = next(
+            (item for item in objects if item["id"] == stored_id),
+            None,
+        )
+        target = None
+        if (
+            stored_target is not None
+            and stored_target.get("kind") == "image"
+            and isinstance(stored_target.get("payload"), Mapping)
+            and stored_target["payload"].get("generated") is True
+            and stored_target["payload"].get("media_id") == media_id
+        ):
+            target = stored_target
 
         generated_matches = [
             item
