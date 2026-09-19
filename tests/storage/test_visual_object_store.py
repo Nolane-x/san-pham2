@@ -272,3 +272,29 @@ def test_visual_object_read_rejects_hidden_fractional_z_index(tmp_path):
         ),
     ):
         store.list_visual_objects(scene_id)
+
+@pytest.mark.parametrize("field", ["x", "y", "width", "height", "rotation"])
+def test_visual_object_read_rejects_hidden_non_finite_geometry(tmp_path, field):
+    store, scene_id = _store(tmp_path)
+    object_id = store.add_visual_object(
+        scene_id,
+        "shape",
+        name="Hidden finite geometry integrity",
+        visible=False,
+    )
+
+    with store._connect() as conn:
+        conn.execute(
+            f"UPDATE visual_editor_objects SET {field}=? WHERE id=?",
+            (float("inf"), object_id),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            rf"^scene {scene_id} hidden visual object {object_id} "
+            rf"{field} must be finite$"
+        ),
+    ):
+        store.list_visual_objects(scene_id)
+
