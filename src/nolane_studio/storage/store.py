@@ -94,14 +94,22 @@ class ProjectStore:
         return [dict(row) for row in rows]
 
     @staticmethod
-    def _scene_payload(scene: Any) -> tuple[str, str, str, str]:
+    def _scene_metadata_mapping(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+        if metadata is None:
+            return {}
+        if not isinstance(metadata, Mapping):
+            raise ValueError("metadata must be a mapping")
+        return dict(metadata)
+
+    @classmethod
+    def _scene_payload(cls, scene: Any) -> tuple[str, str, str, str]:
         text = str(getattr(scene, "text", "")).strip()
         if not text:
             raise ValueError("scene text must not be blank")
         image_prompt = str(getattr(scene, "image_prompt", "") or "")
         voice_text = str(getattr(scene, "voice_text", "") or text)
-        metadata = getattr(scene, "metadata", {}) or {}
-        return text, image_prompt, voice_text, json.dumps(dict(metadata), ensure_ascii=False, separators=(",", ":"))
+        metadata = cls._scene_metadata_mapping(getattr(scene, "metadata", None))
+        return text, image_prompt, voice_text, json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod
     def _decode_stored_scene_metadata(value: Any, *, scene_id: str) -> dict[str, Any]:
@@ -239,7 +247,7 @@ class ProjectStore:
                     text,
                     str(image_prompt or ""),
                     str(voice_text or text),
-                    json.dumps(dict(metadata or {}), ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(self._scene_metadata_mapping(metadata), ensure_ascii=False, separators=(",", ":")),
                 ),
             )
             self._sync_scene_count(conn, project_id)
@@ -274,7 +282,13 @@ class ProjectStore:
                 values.append(str(voice_text))
             if metadata is not None:
                 updates.append("metadata_json=?")
-                values.append(json.dumps(dict(metadata), ensure_ascii=False, separators=(",", ":")))
+                values.append(
+                    json.dumps(
+                        self._scene_metadata_mapping(metadata),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
             if not updates:
                 return
             updates.append("updated_at=CURRENT_TIMESTAMP")
