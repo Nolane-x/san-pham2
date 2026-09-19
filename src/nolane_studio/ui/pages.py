@@ -185,6 +185,211 @@ class StudioPage(_BaseStudioPage):
         self.inspector_layout.insertWidget(save_index + 2, self.voice_options_surface)
         self._sync_voice_capability_controls()
 
+        self.transition_surface = Surface()
+        transition_grid = QGridLayout(self.transition_surface)
+        transition_grid.setContentsMargins(12, 12, 12, 12)
+        transition_grid.setHorizontalSpacing(10)
+        transition_grid.setVerticalSpacing(8)
+
+        self.transition_pair_label = QLabel("Transition · no following scene")
+        self.transition_pair_label.setObjectName("muted")
+        transition_grid.addWidget(self.transition_pair_label, 0, 0, 1, 3)
+
+        transition_grid.addWidget(QLabel("Effect"), 1, 0)
+        self.transition_effect_combo = QComboBox()
+        for label, effect in (
+            ("Fade", "fade"),
+            ("Wipe left", "wipeleft"),
+            ("Wipe right", "wiperight"),
+            ("Slide left", "slideleft"),
+            ("Slide right", "slideright"),
+            ("Smooth left", "smoothleft"),
+            ("Smooth right", "smoothright"),
+        ):
+            self.transition_effect_combo.addItem(label, effect)
+        transition_grid.addWidget(self.transition_effect_combo, 1, 1, 1, 2)
+
+        transition_grid.addWidget(QLabel("Duration"), 2, 0)
+        self.transition_duration_spin = QDoubleSpinBox()
+        self.transition_duration_spin.setRange(0.1, 10.0)
+        self.transition_duration_spin.setSingleStep(0.05)
+        self.transition_duration_spin.setDecimals(2)
+        self.transition_duration_spin.setSuffix(" s")
+        self.transition_duration_spin.setValue(0.5)
+        transition_grid.addWidget(self.transition_duration_spin, 2, 1, 1, 2)
+
+        transition_actions = QHBoxLayout()
+        self.transition_save_button = QPushButton("Save transition")
+        self.transition_save_button.clicked.connect(self._save_selected_transition)
+        self.transition_clear_button = QPushButton("Clear")
+        self.transition_clear_button.setObjectName("ghost")
+        self.transition_clear_button.clicked.connect(self._clear_selected_transition)
+        transition_actions.addWidget(self.transition_save_button)
+        transition_actions.addWidget(self.transition_clear_button)
+        transition_grid.addLayout(transition_actions, 3, 0, 1, 3)
+
+        self.inspector_layout.insertWidget(save_index + 3, self.transition_surface)
+        self.scenes.currentItemChanged.connect(
+            lambda _current, _previous: self._sync_transition_editor()
+        )
+        self._sync_transition_editor()
+
+    def load_project(self, project_id: str, title: str, scenes: list) -> None:
+        super().load_project(project_id, title, scenes)
+        self._sync_transition_editor()
+
+    def _effective_transition_scene_ids(self) -> list[str]:
+        if not self.project_id:
+            return []
+        scene_ids = [str(scene["id"]) for scene in self.store.list_scenes(self.project_id)]
+        state = self.store.load_timeline(self.project_id)
+        raw_order = state.get("mediaOrder", [])
+        if (
+            isinstance(raw_order, list)
+            and raw_order
+            and len(raw_order) == len(scene_ids)
+        ):
+            normalized = [str(item).strip() for item in raw_order]
+            if (
+                all(normalized)
+                and len(set(normalized)) == len(normalized)
+                and set(normalized) == set(scene_ids)
+            ):
+                return normalized
+        return scene_ids
+
+    def _selected_transition_pair(self) -> tuple[str, str] | None:
+        selected = self._selected_scene_id()
+        if not selected:
+            return None
+        order = self._effective_transition_scene_ids()
+        try:
+            index = order.index(selected)
+        except ValueError:
+            return None
+        if index >= len(order) - 1:
+            return None
+        return order[index], order[index + 1]
+
+    def _sync_transition_editor(self) -> None:
+        pair = self._selected_transition_pair()
+        enabled = pair is not None
+        for widget in (
+            self.transition_effect_combo,
+            self.transition_duration_spin,
+            self.transition_save_button,
+            self.transition_clear_button,
+        ):
+            widget.setEnabled(enabled)
+
+        if pair is None or not self.project_id:
+            self.transition_pair_label.setText("Transition · no following scene")
+            return
+
+        from_id, to_id = pair
+        order = self._effective_transition_scene_ids()
+        from_index = order.index(from_id)
+        self.transition_pair_label.setText(
+            f"Transition · Scene {from_index + 1} → Scene {from_index + 2}"
+        )
+
+        existing = None
+        raw_transitions = self.store.load_timeline(self.project_id).get("transitions", [])
+        if isinstance(raw_transitions, list):
+            for item in raw_transitions:
+                if (
+                    isinstance(item, dict)
+                    and str(item.get("from_id", "")).strip() == from_id
+                    and str(item.get("to_id", "")).strip() == to_id
+                ):
+                    existing = item
+                    break
+
+        effect = "fade"
+        duration = 0.5
+        if existing is not None:
+            effect = str(existing.get("effect", "fade")).strip().lower() or "fade"
+            try:
+                duration = float(existing.get("duration", 0.5))
+            except (TypeError, ValueError):
+                duration = 0.5
+        effect_index = self.transition_effect_combo.findData(effect)
+        self.transition_effect_combo.setCurrentIndex(
+            effect_index if effect_index >= 0 else self.transition_effect_combo.findData("fade")
+        )
+        self.transition_duration_spin.setValue(
+            max(0.1, min(10.0, duration))
+        )
+
+    def _transition_state_for_edit(self) -> tuple[dict, list[dict]]:
+        if not self.project_id:
+            raise RuntimeError("No project open")
+        state = self.store.load_timeline(self.project_id)
+        raw = state.get("transitions", [])
+        if not isinstance(raw, list):
+            raise ValueError("persisted transitions must be a list")
+        transitions: list[dict] = []
+        for index, item in enumerate(raw):
+            if not isinstance(item, dict):
+                raise ValueError(f"persisted transition entry {index} must be a mapping")
+            transitions.append(dict(item))
+        return state, transitions
+
+    def _save_selected_transition(self) -> None:
+        pair = self._selected_transition_pair()
+        if not self.project_id or pair is None:
+            self.status_message.emit("Select a scene that has a following scene")
+            return
+        from_id, to_id = pair
+        try:
+            state, transitions = self._transition_state_for_edit()
+        except ValueError as exc:
+            self.status_message.emit(f"Transition state invalid · {exc}")
+            return
+
+        transitions = [
+            item
+            for item in transitions
+            if not (
+                str(item.get("from_id", "")).strip() == from_id
+                and str(item.get("to_id", "")).strip() == to_id
+            )
+        ]
+        transitions.append(
+            {
+                "from_id": from_id,
+                "to_id": to_id,
+                "effect": str(self.transition_effect_combo.currentData()),
+                "duration": float(self.transition_duration_spin.value()),
+            }
+        )
+        state["transitions"] = transitions
+        self.store.save_timeline(self.project_id, state)
+        self._sync_transition_editor()
+        self.status_message.emit("Scene transition saved · duration remains additive")
+
+    def _clear_selected_transition(self) -> None:
+        pair = self._selected_transition_pair()
+        if not self.project_id or pair is None:
+            return
+        from_id, to_id = pair
+        try:
+            state, transitions = self._transition_state_for_edit()
+        except ValueError as exc:
+            self.status_message.emit(f"Transition state invalid · {exc}")
+            return
+        state["transitions"] = [
+            item
+            for item in transitions
+            if not (
+                str(item.get("from_id", "")).strip() == from_id
+                and str(item.get("to_id", "")).strip() == to_id
+            )
+        ]
+        self.store.save_timeline(self.project_id, state)
+        self._sync_transition_editor()
+        self.status_message.emit("Scene transition cleared")
+
     def _start_task(
         self,
         task: Callable[[], object],
