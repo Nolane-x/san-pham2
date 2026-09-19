@@ -460,6 +460,7 @@ class StudioPage(_BaseStudioPage):
         self.layers.blockSignals(False)
         if panel_rows:
             self.canvas.select_object(self._selected_object_id())
+        self._sync_object_timing_editor()
 
     def _move_selected_object(self, delta: int) -> None:
         object_id = self._selected_object_id()
