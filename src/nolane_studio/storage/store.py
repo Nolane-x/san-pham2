@@ -511,13 +511,6 @@ class ProjectStore:
                 field="visible",
             )
             if not item["visible"]:
-                hidden_kind = str(item["kind"]).strip().lower()
-                if hidden_kind not in self._VISUAL_OBJECT_KINDS:
-                    allowed = ", ".join(sorted(self._VISUAL_OBJECT_KINDS))
-                    raise ValueError(
-                        f"scene {scene_id} hidden visual object {object_id} "
-                        f"kind must be one of: {allowed}"
-                    )
                 if not object_id:
                     raise ValueError(
                         f"scene {scene_id} contains hidden visual object with blank id"
