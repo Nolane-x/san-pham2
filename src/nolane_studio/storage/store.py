@@ -440,6 +440,14 @@ class ProjectStore:
             raise ValueError("opacity must be within 0..1")
         return normalized_kind, width_value, height_value, opacity_value
 
+    @staticmethod
+    def _visual_payload_mapping(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+        if payload is None:
+            return {}
+        if not isinstance(payload, Mapping):
+            raise ValueError("payload must be a mapping")
+        return dict(payload)
+
     @classmethod
     def _decode_stored_object_kind(cls, value: Any, *, object_id: str) -> Any:
         raw = str(value)
@@ -538,7 +546,7 @@ class ProjectStore:
                     opacity_value,
                     1 if visible else 0,
                     1 if locked else 0,
-                    json.dumps(dict(payload or {}), ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(self._visual_payload_mapping(payload), ensure_ascii=False, separators=(",", ":")),
                 ),
             )
             self._touch_project_for_scene(conn, scene_id)
@@ -685,7 +693,13 @@ class ProjectStore:
                 values.append(1 if locked else 0)
             if payload is not None:
                 updates.append("payload_json=?")
-                values.append(json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":")))
+                values.append(
+                    json.dumps(
+                        self._visual_payload_mapping(payload),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
             if not updates:
                 return
             updates.append("updated_at=CURRENT_TIMESTAMP")
