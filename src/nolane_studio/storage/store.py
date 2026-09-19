@@ -161,6 +161,11 @@ class ProjectStore:
         for row in rows:
             scene = dict(row)
             scene_id = str(scene["id"])
+            raw_position = scene["position"]
+            if type(raw_position) is not int or raw_position < 0:
+                raise ValueError(
+                    f"scene {scene_id} position must be a non-negative integer"
+                )
             raw_text = str(scene["text"])
             normalized_text = raw_text.strip()
             if not normalized_text:
