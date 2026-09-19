@@ -556,6 +556,8 @@ class ProjectSceneExporter:
             timeline_state,
         )
         raw_scene_edits = dict(timeline_state or {}).get("sceneEdits", [])
+        if raw_scene_edits is None:
+            raw_scene_edits = []
         selected_edit_state = {
             "sceneEdits": [
                 dict(item)
