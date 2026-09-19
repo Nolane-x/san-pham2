@@ -43,7 +43,7 @@ def test_scene_edits_migrate_existing_timeline_schema(tmp_path):
     conn = sqlite3.connect(db)
     conn.executescript(
         """
-        CREATE TABLE batch_projects(id TEXT PRIMARY KEY);
+        CREATE TABLE batch_projects(\n            id TEXT PRIMARY KEY,\n            cleanup_after REAL,\n            source_cleanup_after REAL\n        );
         CREATE TABLE visual_editor_timeline_state(
             project_id TEXT PRIMARY KEY,
             user_google_id TEXT NOT NULL DEFAULT 'local',
