@@ -367,6 +367,46 @@ class ProjectStore:
             )
         return normalized
 
+    def reset_scene_render_settings(self, scene_id: str) -> dict[str, Any]:
+        """Restore canonical render defaults without deleting scene content.
+
+        Render configuration lives inside scene metadata while narration, AI
+        analysis, generated-media ownership and other recovered metadata share
+        the same envelope. Reset therefore removes only the render_config entry
+        and restores the persisted reveal/hold columns; canvas objects, text,
+        voice/image metadata and project ordering remain untouched.
+        """
+        defaults = normalize_render_config({})
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT project_id, metadata_json FROM visual_editor_scenes WHERE id=?",
+                (scene_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(scene_id)
+            metadata = self._decode_stored_scene_metadata(
+                row["metadata_json"],
+                scene_id=scene_id,
+            )
+            metadata.pop("render_config", None)
+            conn.execute(
+                """UPDATE visual_editor_scenes
+                   SET reveal_duration=?, hold_duration=?, metadata_json=?,
+                       updated_at=CURRENT_TIMESTAMP
+                   WHERE id=?""",
+                (
+                    defaults["reveal_duration"],
+                    defaults["hold_duration"],
+                    json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
+                    scene_id,
+                ),
+            )
+            conn.execute(
+                "UPDATE user_project_library SET updated_at=CURRENT_TIMESTAMP WHERE project_id=?",
+                (row["project_id"],),
+            )
+        return defaults
+
     def get_scene_render_settings(self, scene_id: str) -> dict[str, Any]:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM visual_editor_scenes WHERE id=?", (scene_id,)).fetchone()

@@ -462,7 +462,12 @@ class StudioPage(QWidget):
         inspector_layout.addWidget(self.remove_background_check)
         inspector_layout.addWidget(self.auto_object_fx_check)
         inspector_layout.addStretch(1)
-        inspector_layout.addWidget(QPushButton("Reset scene"))
+        self.reset_scene_button = QPushButton("Reset scene")
+        self.reset_scene_button.setToolTip(
+            "Restore scene render/motion controls to defaults without deleting layers, text, media or narration"
+        )
+        self.reset_scene_button.clicked.connect(self._reset_selected_scene)
+        inspector_layout.addWidget(self.reset_scene_button)
 
         workspace.addWidget(scenes_panel)
         workspace.addWidget(canvas_shell)
@@ -511,6 +516,7 @@ class StudioPage(QWidget):
             self.remove_background_check,
             self.auto_object_fx_check,
             self.object_timing_combo,
+            self.reset_scene_button,
         ):
             widget.setEnabled(enabled)
         self._sync_object_timing_editor()
@@ -916,6 +922,17 @@ class StudioPage(QWidget):
         else:
             self._refresh_scenes(fallback_row=min(current_row, len(rows) - 1))
         self.status_message.emit("Scene deleted")
+
+    def _reset_selected_scene(self) -> None:
+        scene_id = self._selected_scene_id()
+        if not scene_id:
+            self.status_message.emit("Select a scene before resetting")
+            return
+        self.draw_button.setChecked(False)
+        self.store.reset_scene_render_settings(scene_id)
+        self._load_render_controls(scene_id)
+        self._refresh_canvas_objects(selected_object_id=self._selected_object_id())
+        self.status_message.emit("Scene render settings reset to defaults")
 
     def _save_selected_scene(self) -> None:
         scene_id = self._selected_scene_id()
