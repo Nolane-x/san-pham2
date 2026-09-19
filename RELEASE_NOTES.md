@@ -1,29 +1,29 @@
-# Nolane Studio v0.14.0
+# Nolane Studio v0.15.0
 
-Apply Drawing Settings To All Scenes forensic-parity release.
+Scene Lifecycle Timeline Integrity forensic-parity release.
 
 Highlights:
 
-- restores the recovered project-wide editor action for applying drawing settings across all scenes;
-- persists the currently visible Inspector controls before propagation so the action uses what the user actually sees;
-- propagates reveal/hold duration, style, visual mode, brush direction, hand selection, background-removal toggle and automatic object-FX toggle;
-- performs the project-wide storage update atomically;
-- deliberately preserves every target scene's object-addressed state rather than copying object IDs between scenes;
-- preserves target object timing, custom push/effect/sound configuration, custom draw paths, camera/image-motion state and unknown target extras;
-- preserves scene metadata such as narration and generated-image ownership;
-- exposes the action only when a scene is selected and reports the number of updated scenes;
-- preserves v0.13 lossless scene reset, v0.12 selected-scene preview, v0.11 grounded readable labels, v0.10 scene trim/speed, v0.9 object timing, v0.8 narration export, v0.7 transitions, v0.6 advanced voice, v0.5 generated images and v0.4 AI Analyze behavior.
+- makes scene Add, Duplicate, Move and Delete preflight persisted timeline state before changing the scene graph;
+- rewrites `mediaOrder` to the exact authoritative current scene IDs after every supported scene lifecycle mutation;
+- retains only transitions whose endpoints remain adjacent after the mutation, preventing stale transitions from silently retargeting a different visual relationship;
+- removes `sceneEdits` entries whose scene no longer exists;
+- clones a duplicated source scene's explicit trim/speed `sceneEdits` window onto the duplicate while preserving existing object/custom-timing ID remapping;
+- recreates a valid one-scene timeline when the final scene is deleted and Studio creates its replacement blank scene;
+- blocks lifecycle mutation before graph changes when opaque non-empty legacy `clips`, `videoClips` or `audioClips` state is present;
+- rejects malformed timeline references such as non-adjacent persisted transitions before mutation rather than turning them into a later export failure;
+- replaces stale diverged PR #16 with a clean current-main port on top of merged v0.14;
+- preserves v0.14 project-wide drawing settings, v0.13 lossless scene reset, v0.12 selected-scene preview, v0.11 grounded readable labels, v0.10 scene trim/speed, v0.9 object timing, v0.8 narration export, v0.7 transitions, v0.6 advanced voice, v0.5 generated images and v0.4 AI Analyze behavior.
 
 Forensic boundary:
 
-- the action propagates only scene-wide drawing controls that can be moved safely between scenes;
-- object-addressed state is intentionally not propagated because object identity is scene-local;
-- non-empty legacy `clips`, `videoClips` and `audioClips` entry schemas remain unrecovered and are not decoded by this slice;
-- arbitrary custom draw-path semantics, source-exact non-default hand/background-removal behavior, object-SFX semantics and source-exact legacy label typography/decoration remain evidence-limited.
+- this release reconciles only rebuild-owned, evidence-backed timeline semantics and does not decode or invent legacy non-empty track entry schemas;
+- arbitrary legacy multi-track splitting/cutting remains outside this slice even though the repository contains generic timeline helpers;
+- arbitrary custom draw paths, source-exact non-default hand/background-removal behavior, object-FX/SFX semantics and source-exact legacy label typography/decoration remain evidence-limited.
 
 Release integrity:
 
-- package metadata and runtime `__version__` are both 0.14.0;
-- storage coverage proves portable drawing controls propagate while target object-specific state and metadata remain intact;
-- offscreen Studio coverage proves the action uses visible Inspector values and preserves target custom timing;
-- merge is allowed only after Linux fast tests and the complete Windows test/NUI/portable/installer/checksum packaging workflow pass on the exact final head.
+- package metadata and runtime `__version__` are both 0.15.0;
+- offscreen lifecycle coverage locks add, duplicate, move, delete, last-scene replacement, edit cloning/pruning, transition adjacency and fail-closed opaque legacy-track behavior;
+- implementation fast tests passed before release closure;
+- merge is allowed only after Linux fast tests and the complete Windows test/NUI/portable/installer/checksum packaging workflow pass again on the exact final release head.
