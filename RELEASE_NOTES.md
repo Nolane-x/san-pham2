@@ -1,30 +1,29 @@
-# Nolane Studio v0.16.0
+# Nolane Studio v0.17.0
 
-Recovered Whiteboard Outro Controls forensic-parity release.
+Visible Object Push Activation Integrity forensic-parity release.
 
 Highlights:
 
-- exposes the already-recovered whiteboard outro contract in the Studio Inspector instead of leaving it hidden in persisted render state;
-- lets a whiteboard scene enable or disable its additive post-hold outro and edit the recovered 0–5 second outro duration;
-- exposes only the strongly evidenced/rendered `left` direction for new edits; no unsupported direction is invented;
-- preserves an unknown persisted legacy outro direction as an explicit `Unsupported · <value>` choice until the user deliberately selects verified `left`, preventing silent project-state rewriting;
-- disables creation/editing of outro state for `color_reveal`, because the authoritative project exporter currently verifies outro only for whiteboard scenes without source video;
-- keeps the Inspector compact by placing On/direction/duration in one row, preserving the existing 720p-oriented workspace density;
-- Reset scene restores the canonical recovered outro defaults: disabled, `left`, 0.3 seconds;
-- Apply drawing settings to all scenes intentionally does not copy scene-specific outro state between scenes;
-- reuses the existing authoritative whiteboard renderer, duration math and FFmpeg scene-exit implementation rather than creating a second motion path;
-- preserves v0.15 scene lifecycle integrity, v0.14 project-wide drawing settings, v0.13 lossless scene reset, v0.12 selected-scene preview, v0.11 grounded readable labels, v0.10 scene trim/speed, v0.9 object timing, v0.8 narration export, v0.7 transitions, v0.6 advanced voice, v0.5 generated images and v0.4 AI Analyze behavior.
+- closes the gap between the recovered per-object Push timing editor and the authoritative whiteboard push/export contract;
+- saving custom object timing derives `large_object_push_enabled` from positive Push timing across currently visible scene objects, matching the timing entries the renderer actually consumes;
+- resetting an object's timing recomputes the same activation contract, so removing the final positive visible Push disables scene push instead of leaving stale enabled state;
+- hidden or stale object timing is preserved but cannot spuriously enable scene push, matching render-plan visibility semantics;
+- existing automatic push mode and persisted direction are preserved rather than silently rewritten;
+- malformed or ambiguous legacy timing makes activation derivation return no decision, so the UI preserves the existing activation flag instead of inventing a repair;
+- UI-saved positive Push is covered through `ProjectSceneExporter`, proving it passes the existing push preflight and reaches the authoritative whiteboard render path;
+- preserves v0.16 recovered whiteboard outro controls and every earlier verified parity wave.
 
 Forensic boundary:
 
-- `left` is the only whiteboard outro direction currently supported by recovered evidence and the authoritative renderer; other persisted directions remain fail-closed/preserved rather than approximated;
-- whiteboard outro with source-video composition and non-whiteboard outro behavior remain unsupported by the current faithful renderer;
+- this release synchronizes activation only; it does not claim new object-push motion semantics;
+- the authoritative renderer still supports only the existing recovered/default automatic `from_left` push direction; non-automatic modes, custom push configs and unsupported directions remain fail-closed;
+- source-video positive push remains unsupported by the faithful renderer;
+- malformed timing for the currently selected layer can still be rejected by existing timing/UI validation paths rather than being silently coerced;
 - arbitrary custom draw paths, source-exact non-default hand/background-removal behavior, object-FX/SFX routing, non-empty legacy `clips` / `videoClips` / `audioClips` / `batch_voice_segments` schemas and source-exact legacy label typography/decoration remain evidence-limited.
 
 Release integrity:
 
-- package metadata and runtime `__version__` are both 0.16.0;
-- renderer-level outro tests already lock additive duration, post-hold placement, verified leftward FFmpeg motion and fail-closed unknown directions;
-- new offscreen Studio coverage locks persistence, unknown-direction preservation/repair, color-reveal gating, reset defaults and project-wide apply isolation;
-- implementation fast tests passed before release closure;
+- package metadata and runtime `__version__` are both 0.17.0;
+- new tests lock positive activation, reset/deactivation, hidden stale timing isolation, malformed-state preservation and ProjectSceneExporter compatibility;
+- the implementation fast gate passed after correcting the malformed-other-object test setup;
 - merge is allowed only after Linux fast tests and the complete Windows test/NUI/portable/installer/checksum packaging workflow pass on the exact final release head.
