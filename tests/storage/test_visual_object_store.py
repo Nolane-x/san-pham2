@@ -246,3 +246,29 @@ def test_visual_object_read_rejects_hidden_unknown_kind(tmp_path):
         ),
     ):
         store.list_visual_objects(scene_id)
+
+
+
+def test_visual_object_read_rejects_hidden_fractional_z_index(tmp_path):
+    store, scene_id = _store(tmp_path)
+    object_id = store.add_visual_object(
+        scene_id,
+        "shape",
+        name="Hidden z-index integrity",
+        visible=False,
+    )
+
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_objects SET z_index=? WHERE id=?",
+            (0.5, object_id),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            rf"^scene {scene_id} hidden visual object {object_id} "
+            r"z_index must be a non-negative integer$"
+        ),
+    ):
+        store.list_visual_objects(scene_id)
