@@ -6,7 +6,7 @@ Highlights:
 
 - restores the recovered rule that readable labels are added deterministically after image generation instead of asking the diffusion/image provider to render long text;
 - consumes the already-persisted AI Analyze contract: exact `label` text plus normalized grounded `box` coordinates;
-- materializes each recovered label as an editable Canvas `text` object, so the normal scene compositor and authoritative final export render the same layer state the user sees;
+- materializes each recovered label as a persisted Canvas `text` object, so the normal scene compositor and authoritative final export render the same layer state the user sees;
 - materializes labels when AI Analyze completes and idempotently preserves them on generated-image cache hits for the same visual;
 - invalidates stale `ai_analysis` grounding and Nolane-owned label layers when a provider actually generates a new image, preventing old boxes from being projected onto a changed composition;
 - uses stable analysis slots so repeated synchronization is idempotent and existing service-owned object IDs are retained when possible;
