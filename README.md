@@ -11,10 +11,10 @@ The product is a clean rebuild based on behavior recovered from a legacy Windows
 - **Media import and attachment** — images, narration audio and video are copied into the local project workspace and can be attached explicitly to scenes.
 - **Generated images** — per-scene Generate image and project-wide Generate All Images use hardened scene prompts, stable cached media slots and persisted background Canvas objects that flow into the authoritative render plan.
 - **AI Analyze** — configured STT supplies narration timing, configured vision supplies grounded object identity/location, and deterministic local logic joins the result into scene metadata with content-based caching.
-- **Voice generation** — per-scene Generate voice and project-wide Voice From Content use configurable TTS providers and stable cached scene media slots.
+- **Voice generation** — per-scene Generate voice and project-wide Voice From Content use capability-driven providers with stable cached scene media slots; providers may additionally expose reference-audio cloning, designed voices and voice discovery.
 - **Windows video export** — media is normalized sequentially with FFmpeg and exported as H.264/AAC MP4 without loading all frames into RAM.
 - **Library** — durable local SQLite projects with no expiry timer.
-- **Providers** — configurable Analysis, Image, Vision, STT and TTS endpoints; environment variables can override local settings for automation.
+- **Providers** — configurable Analysis, Image, Vision, STT and TTS endpoints plus an optional advanced voice-wrapper/catalog pair; environment variables can override local settings for automation.
 - **Low-memory startup** — opening the app does not start a local LLM, TTS model, speech model or image model.
 
 ## Product shape
@@ -85,10 +85,14 @@ NOLANE_STUDIO_STT_BASE_URL=https://provider.example/v1
 NOLANE_STUDIO_STT_MODEL=transcription-model
 NOLANE_STUDIO_TTS_BASE_URL=https://provider.example/v1
 NOLANE_STUDIO_TTS_MODEL=speech-model
+NOLANE_STUDIO_TTS_ADVANCED_ENDPOINT=https://voice-wrapper.example/tts
+NOLANE_STUDIO_TTS_VOICES_ENDPOINT=https://voice-wrapper.example/voices
 NOLANE_STUDIO_API_KEY=...
 ```
 
 The API key is intentionally **not** persisted in `settings.json`.
+
+The normal TTS base URL/model pair is a synthesize-only OpenAI-compatible path. When `NOLANE_STUDIO_TTS_ADVANCED_ENDPOINT` (or the matching Providers-screen field) is configured, Nolane Studio uses the explicit generic advanced-voice JSON adapter instead and advertises clone/design capabilities. `NOLANE_STUDIO_TTS_VOICES_ENDPOINT` is optional; when present it enables provider voice discovery. This keeps vendor-specific clone/design wire protocols outside the product core instead of pretending they are standardized.
 
 ## Architecture
 
@@ -103,4 +107,4 @@ See [`RECOVERED_ARCHITECTURE.md`](RECOVERED_ARCHITECTURE.md) for the behavioral 
 
 ## Current boundary
 
-This release includes the recovered API-first generated-image workflow, but it does **not** yet claim parity for every advanced legacy drawing algorithm, object-level whiteboard animation, multi-track trimming/cutting, transition editor, automatic exact-label post-processing whose source/layout contract has not yet been recovered strongly enough, or complete voice-generation UX. Those remain subsequent parity layers rather than being hidden behind a false “finished” claim.
+This release includes the recovered generated-image workflow and capability-driven advanced voice workflow, but it does **not** yet claim parity for every advanced legacy drawing algorithm, object-level whiteboard animation, multi-track trimming/cutting, transition editor, or automatic exact-label post-processing whose source/layout contract has not yet been recovered strongly enough. Those remain subsequent parity layers rather than being hidden behind a false “finished” claim.
