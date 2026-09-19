@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from nolane_studio.domain import Scene
 from nolane_studio.storage.store import ProjectStore
 
@@ -60,3 +62,35 @@ def test_scene_render_settings_are_normalized_fail_safe(tmp_path):
     assert settings["visual_mode"] == "drawing"
     assert settings["reveal_duration"] == 0.0
     assert settings["hold_duration"] == 0.0
+
+def test_scene_read_rejects_non_mapping_persisted_metadata(tmp_path):
+    store, scene_id = _scene(tmp_path)
+
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_scenes SET metadata_json=? WHERE id=?",
+            ("[]", scene_id),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^scene {scene_id} metadata must be a mapping$",
+    ):
+        store.list_scenes("p1")
+
+
+def test_scene_render_settings_read_rejects_non_mapping_persisted_metadata(tmp_path):
+    store, scene_id = _scene(tmp_path)
+
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_scenes SET metadata_json=? WHERE id=?",
+            ("[]", scene_id),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^scene {scene_id} metadata must be a mapping$",
+    ):
+        store.get_scene_render_settings(scene_id)
+
