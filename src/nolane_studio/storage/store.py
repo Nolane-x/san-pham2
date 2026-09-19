@@ -499,16 +499,27 @@ class ProjectStore:
         seen_z_visibility: dict[int, bool] = {}
         for row in rows:
             item = dict(row)
-            object_id = str(item["id"])
+            raw_object_id = str(item["id"])
+            object_id = raw_object_id.strip()
             item["kind"] = self._decode_stored_object_kind(
                 item["kind"],
-                object_id=object_id,
+                object_id=raw_object_id,
             )
             item["visible"] = self._decode_stored_object_flag(
                 item["visible"],
-                object_id=object_id,
+                object_id=raw_object_id,
                 field="visible",
             )
+            if not item["visible"]:
+                if not object_id:
+                    raise ValueError(
+                        f"scene {scene_id} contains hidden visual object with blank id"
+                    )
+                if raw_object_id != object_id:
+                    raise ValueError(
+                        f"scene {scene_id} contains hidden visual object "
+                        f"with noncanonical id {raw_object_id!r}"
+                    )
             z_index = int(item["z_index"])
             prior_visible = seen_z_visibility.get(z_index)
             if prior_visible is not None and not (prior_visible and item["visible"]):
