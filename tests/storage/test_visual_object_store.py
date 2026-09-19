@@ -196,3 +196,27 @@ def test_visual_object_read_rejects_hidden_noncanonical_identity(tmp_path, corru
         match=rf"^scene {scene_id} {message}$",
     ):
         store.list_visual_objects(scene_id)
+
+
+
+def test_visual_object_read_rejects_hidden_non_mapping_payload(tmp_path):
+    store, scene_id = _store(tmp_path)
+    object_id = store.add_visual_object(
+        scene_id,
+        "shape",
+        name="Hidden payload integrity",
+        visible=False,
+        payload={"fill": "#ffffff"},
+    )
+
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_objects SET payload_json=? WHERE id=?",
+            ("[]", object_id),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^scene {scene_id} hidden visual object {object_id} payload must be a mapping$",
+    ):
+        store.list_visual_objects(scene_id)
