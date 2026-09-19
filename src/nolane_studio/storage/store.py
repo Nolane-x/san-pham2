@@ -104,6 +104,13 @@ class ProjectStore:
         return text, image_prompt, voice_text, json.dumps(dict(metadata), ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod
+    def _decode_stored_scene_metadata(value: Any, *, scene_id: str) -> dict[str, Any]:
+        metadata = json.loads(value or "{}")
+        if not isinstance(metadata, Mapping):
+            raise ValueError(f"scene {scene_id} metadata must be a mapping")
+        return dict(metadata)
+
+    @staticmethod
     def _stored_render_config(metadata: Mapping[str, Any]) -> dict[str, Any]:
         raw = metadata.get("render_config")
         if raw is None:
@@ -162,7 +169,10 @@ class ProjectStore:
                 raise ValueError(
                     f"scene {scene_id} text must be stored without surrounding whitespace"
                 )
-            scene["metadata"] = json.loads(scene.pop("metadata_json") or "{}")
+            scene["metadata"] = self._decode_stored_scene_metadata(
+                scene.pop("metadata_json"),
+                scene_id=scene_id,
+            )
             result.append(scene)
         return result
 
@@ -265,7 +275,10 @@ class ProjectStore:
             row = conn.execute("SELECT * FROM visual_editor_scenes WHERE id=?", (scene_id,)).fetchone()
             if row is None:
                 raise KeyError(scene_id)
-            metadata = json.loads(row["metadata_json"] or "{}")
+            metadata = self._decode_stored_scene_metadata(
+                row["metadata_json"],
+                scene_id=scene_id,
+            )
             stored = self._stored_render_config(metadata)
             stored.update(dict(settings or {}))
             stored["reveal_duration"] = row["reveal_duration"] if reveal_duration is None else reveal_duration
@@ -301,7 +314,10 @@ class ProjectStore:
             row = conn.execute("SELECT * FROM visual_editor_scenes WHERE id=?", (scene_id,)).fetchone()
         if row is None:
             raise KeyError(scene_id)
-        metadata = json.loads(row["metadata_json"] or "{}")
+        metadata = self._decode_stored_scene_metadata(
+            row["metadata_json"],
+            scene_id=scene_id,
+        )
         raw = self._stored_render_config(metadata)
         raw["reveal_duration"] = row["reveal_duration"]
         raw["hold_duration"] = row["hold_duration"]
