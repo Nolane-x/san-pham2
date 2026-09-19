@@ -126,6 +126,17 @@ def _owned_label_slots(
     return slots
 
 
+def validate_readable_label_object_state(
+    store: ProjectStore,
+    scene_id: str,
+) -> None:
+    """Validate existing service-owned label slots without mutating them."""
+    scene_id = str(scene_id).strip()
+    if not scene_id:
+        raise ValueError("scene_id must not be blank")
+    _owned_label_slots(store.list_visual_objects(scene_id))
+
+
 def sync_readable_label_objects(
     store: ProjectStore,
     scene_id: str,
