@@ -1,23 +1,22 @@
-# Nolane Studio v0.3.0
+# Nolane Studio v0.4.0
 
-Canvas/Object Engine parity release.
+AI Analyze + Voice From Content forensic-parity release.
 
 Highlights:
 
-- persistent visual objects and layers are stored per scene with stable IDs and deterministic z-order;
-- Studio canvas restores persisted shape, text, image, video and drawing objects instead of flattening editor state;
-- layer movement, object transforms, deletion and scene duplication preserve authoritative SQLite state;
-- freehand drawing persists as scene drawing layers and survives scene reloads;
-- recovered scene render settings, reveal/hold timing, drawing modes, brush direction, hand style, background removal and object timing are persisted;
-- final project export now consumes persisted scene composition and validated timeline ordering rather than silently ignoring editor state;
-- static, whiteboard and source-video composition paths preserve supported layer ordering and fail closed on ambiguous or unsupported persisted state;
-- render preflight rejects malformed identities, kinds, z-order, geometry, payloads, timing, camera settings and other non-finite/corrupt persisted values before output side effects;
-- storage writers reject silent sequence-to-mapping, fractional-index, non-finite geometry and truthiness coercions that could create invalid scene/object state;
-- Canvas hydration validates z-index and payload shape before destructive UI replacement;
-- Windows verification covers the full 654-test suite, NUI rendered evidence, portable executable smoke testing, Inno Setup packaging, silent install/launch/uninstall and SHA-256 verification.
+- restores the recovered AI Analyze workflow through replaceable API-first providers: timestamped STT determines when narration phrases occur, vision grounding determines what/where visible objects are, and deterministic local logic joins the two;
+- caches AI Analyze results by scene image/audio/language/target-phrase content so unchanged inputs reuse deterministic analysis while meaningful input changes invalidate the cache;
+- persists AI analysis under scene metadata without replacing unrelated Canvas/Object Engine metadata;
+- restores per-scene Generate voice and project-wide Voice From Content using configurable TTS providers and stable cached `voice-{scene_id}` media slots;
+- exposes Analysis, Vision, STT and TTS endpoint/model settings in the Providers UI while retaining environment-variable overrides for automation;
+- restores audio import and explicit scene media attachment so AI Analyze can consume attached/generated image and narration audio end-to-end;
+- injects the live lazy ProviderRegistry into Studio, so merely opening the application does not load heavyweight AI engines;
+- preserves the v0.3.0 Canvas/Object Engine as the authoritative project, scene, layer, timing and final-export substrate;
+- keeps the Windows-first, local-project workflow free from Pro/paywall/license/login gates and does not require Ollama, OmniVoice or other heavyweight local AI runtimes;
+- removes the stale hard-coded UI version label so release identity is no longer allowed to drift from package/release metadata.
 
 Release integrity:
 
-- v0.2.0 remains the Editor Core baseline;
-- v0.3.0 is the first release containing the persistent Canvas/Object Engine parity work;
-- release automation refuses to overwrite an existing version tag that belongs to a different commit, preventing stale-version asset clobbering.
+- v0.3.0 remains the persistent Canvas/Object Engine parity baseline;
+- v0.4.0 is the first release containing the restored AI Analyze + Voice From Content application workflow;
+- the release workflow packages and smoke-tests the exact PR/main commit before publishing versioned Windows artifacts and refuses to overwrite an existing version tag that belongs to a different commit.

@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
         new_btn.setObjectName("primary")
         new_btn.clicked.connect(lambda: self._navigate(0))
         side.addWidget(new_btn)
-        local = QLabel("LOCAL-FIRST  ·  v0.1")
+        local = QLabel("LOCAL-FIRST")
         local.setObjectName("brandMeta")
         local.setAlignment(Qt.AlignmentFlag.AlignCenter)
         side.addWidget(local)
