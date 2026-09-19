@@ -4,10 +4,13 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
+from nolane_studio.domain import TransitionSpec
+
 from .compositor import CompositionError, render_scene_snapshot, validate_supported_static_visual_state
 from .effects import normalize_ffmpeg_render_geometry
 from .exporter import ExportClip, MediaExporter
 from .scene_plan import ScenePlanStore, SceneRenderPlan, build_scene_render_plan
+from .timeline import build_transition_gaps
 from .video_compositor import SceneVideoCompositor, validate_supported_video_composition
 from .whiteboard_compositor import (
     UnsupportedWhiteboardMotion,
@@ -213,6 +216,59 @@ def validate_persisted_timeline_state(
         )
 
 
+_PERSISTED_TRANSITION_EFFECTS = {
+    "fade",
+    "wipeleft",
+    "wiperight",
+    "slideleft",
+    "slideright",
+    "smoothleft",
+    "smoothright",
+}
+
+
+def persisted_transition_specs(
+    clip_ids: Sequence[str],
+    state: Mapping[str, Any] | None,
+) -> list[TransitionSpec]:
+    """Decode only the explicit rebuild transition field and fail closed on ambiguity."""
+    raw = dict(state or {}).get("transitions", [])
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list):
+        raise UnsupportedProjectTimeline("transitions must be a list")
+
+    specs: list[TransitionSpec] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            raise UnsupportedProjectTimeline(
+                f"transition entry {index} must be a mapping"
+            )
+        effect = str(item.get("effect", "")).strip().lower()
+        if effect not in _PERSISTED_TRANSITION_EFFECTS:
+            raise UnsupportedProjectTimeline(
+                f"transition entry {index} uses unsupported effect: {effect or '<blank>'}"
+            )
+        try:
+            spec = TransitionSpec(
+                str(item.get("from_id", "")),
+                str(item.get("to_id", "")),
+                effect,
+                item.get("duration"),
+            )
+        except (TypeError, ValueError) as exc:
+            raise UnsupportedProjectTimeline(
+                f"transition entry {index} is invalid: {exc}"
+            ) from exc
+        specs.append(spec)
+
+    try:
+        build_transition_gaps([str(clip_id) for clip_id in clip_ids], specs)
+    except ValueError as exc:
+        raise UnsupportedProjectTimeline(str(exc)) from exc
+    return specs
+
+
 class ProjectExportStore(ScenePlanStore, Protocol):
     def load_timeline(self, project_id: str) -> dict[str, Any]: ...
 
@@ -303,10 +359,15 @@ class ProjectSceneExporter:
         validate_project_scene_render_state(plans)
         validate_project_scene_composition(plans)
         timeline_state = self.store.load_timeline(project_id)
-        validate_persisted_timeline_state(
-            [plan.scene_id for plan in plans],
-            timeline_state,
+        scene_ids = [plan.scene_id for plan in plans]
+        validate_persisted_timeline_state(scene_ids, timeline_state)
+        media_order = timeline_state.get("mediaOrder", [])
+        ordered_scene_ids = (
+            [str(item).strip() for item in media_order]
+            if media_order
+            else scene_ids
         )
+        transitions = persisted_transition_specs(ordered_scene_ids, timeline_state)
         normalize_ffmpeg_render_geometry(width, height, fps)
 
         output_path = Path(output)
@@ -385,12 +446,17 @@ class ProjectSceneExporter:
                 )
 
             clips = apply_persisted_timeline_state(clips, timeline_state)
+            export_kwargs: dict[str, object] = {
+                "width": width,
+                "height": height,
+                "fps": fps,
+            }
+            if transitions:
+                export_kwargs["transitions"] = transitions
             return Path(
                 self.media_exporter.export(
                     clips,
                     output_path,
-                    width=width,
-                    height=height,
-                    fps=fps,
+                    **export_kwargs,
                 )
             )
