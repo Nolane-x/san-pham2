@@ -201,3 +201,66 @@ def test_generated_image_becomes_one_reusable_background_canvas_layer(tmp_path):
     assert generated_again[0]["id"] == generated[0]["id"]
     assert generated_again[0]["source"] == second.path
     assert fake.calls == 2
+
+
+def test_image_prompt_enrichment_preserves_scene_structure_and_persists_prompts(tmp_path):
+    from nolane_studio.images import ImagePromptEnrichmentService
+    from nolane_studio.domain import Scene
+
+    class FakeAnalysisProvider:
+        def __init__(self):
+            self.calls = []
+
+        def enrich(self, scenes, instructions=""):
+            self.calls.append((list(scenes), instructions))
+            return [
+                Scene(
+                    index=scene.index,
+                    text=scene.text,
+                    image_prompt=f"Visual prompt {scene.index}: {scene.text[:24]}",
+                    voice_text=scene.voice_text,
+                    metadata=scene.metadata,
+                )
+                for scene in scenes
+            ]
+
+    store = ProjectStore(tmp_path / "studio.db")
+    store.initialize()
+    store.create_project("p1", "Prompt project")
+    first = store.add_scene("p1", "First scene narration")
+    second = store.add_scene("p1", "Second scene narration")
+
+    fake = FakeAnalysisProvider()
+    registry = ProviderRegistry()
+    registry.register(
+        "analysis-api",
+        ProviderCapabilities(analysis=True),
+        lambda: fake,
+    )
+
+    service = ImagePromptEnrichmentService(store, registry)
+    result = service.enrich_project(
+        "p1",
+        provider_name="analysis-api",
+        instructions="simple whiteboard visuals",
+    )
+
+    assert [item.scene_id for item in result] == [first, second]
+    scenes = store.list_scenes("p1")
+    assert [scene["text"] for scene in scenes] == [
+        "First scene narration",
+        "Second scene narration",
+    ]
+    assert [scene["image_prompt"] for scene in scenes] == [
+        "Visual prompt 0: First scene narration",
+        "Visual prompt 1: Second scene narration",
+    ]
+    assert len(fake.calls) == 1
+
+
+def test_studio_exposes_explicit_prompt_enrichment_action(tmp_path):
+    _app()
+    store, _scene_id = _store(tmp_path)
+    page = StudioPage(store)
+
+    assert page.enrich_prompts_button.text() == "Enrich prompts"
