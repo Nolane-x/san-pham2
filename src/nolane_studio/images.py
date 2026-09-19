@@ -62,6 +62,55 @@ class GeneratedImageService:
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
+    def _ensure_canvas_layer(
+        self,
+        scene_id: str,
+        *,
+        media_id: str,
+        path: Path,
+    ) -> str:
+        matches = []
+        for obj in self.store.list_visual_objects(scene_id):
+            if str(obj.get("kind", "")).strip().lower() != "image":
+                continue
+            payload = obj.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("generated_scene_image") is True:
+                matches.append(obj)
+
+        if len(matches) > 1:
+            raise ValueError(
+                f"scene {scene_id} contains multiple generated image canvas layers"
+            )
+
+        payload = {
+            "media_id": media_id,
+            "fit": "contain",
+            "generated_scene_image": True,
+        }
+        if matches:
+            object_id = str(matches[0]["id"])
+            self.store.update_visual_object(
+                object_id,
+                source=str(path),
+                payload=payload,
+            )
+            return object_id
+
+        return self.store.add_visual_object(
+            scene_id,
+            "image",
+            name="Generated scene image",
+            source=str(path),
+            x=0.0,
+            y=0.0,
+            width=1280.0,
+            height=720.0,
+            payload=payload,
+            z_index=0,
+        )
+
     def generate_scene(
         self,
         project_id: str,
@@ -107,6 +156,11 @@ class GeneratedImageService:
                     str(path),
                     media_id=media_id,
                 )
+            self._ensure_canvas_layer(
+                scene_id,
+                media_id=media_id,
+                path=path,
+            )
             return GeneratedImageArtifact(scene_id, media_id, str(path), request.prompt)
 
         provider = self.providers.get(provider_name)
@@ -127,6 +181,12 @@ class GeneratedImageService:
                 str(path),
                 media_id=media_id,
             )
+
+        self._ensure_canvas_layer(
+            scene_id,
+            media_id=media_id,
+            path=path,
+        )
 
         metadata.update(
             {
