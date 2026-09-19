@@ -1,21 +1,29 @@
-# Forensic parity scope — v0.4.0
+# Forensic parity scope — v0.5.0
 
-This branch restores behavior recovered from the legacy Windows creator application without inventing a new product architecture or reintroducing its branding, trade dress, licensing, account, telemetry, updater, or heavyweight-runtime coupling.
+This branch continues the clean source rebuild of the user's legacy Windows creator application. The recovered EXE remains a behavioral oracle: useful workflows and state contracts are restored, while legacy branding, trade dress, licensing, account, telemetry, updater and heavyweight-runtime coupling stay outside the creator path.
 
 ## Authority of this parity slice
 
-- API-first **AI Analyze** preserves the recovered pipeline: timestamped STT determines **when**, vision grounding determines **what/where**, and deterministic local logic produces scene object timing/metadata.
-- AI Analyze cache identity is content-based and deterministic; unchanged image/audio/language/target-phrase inputs may be reused, while meaningful input changes invalidate the cache.
-- **Generate voice** and **Voice From Content** are provider operations backed by configurable TTS capabilities and stable per-scene cached media slots.
-- Studio receives the live lazy provider registry. Providers are instantiated only when their capability is actually requested.
-- The Providers UI exposes Analysis, Vision, STT and TTS endpoint/model configuration. Environment variables remain valid automation overrides.
-- Image/audio/video attachment is explicit persisted scene metadata. AI Analyze requires real scene image and narration-audio inputs instead of silently fabricating them.
-- The v0.3.0 project/scene/media/Canvas/Object/timeline/render/export state remains authoritative and is not replaced by AI-specific storage.
+- The recovered pipeline explicitly contains **optional image generation** between validated scene prompts and the visual editor.
+- Image generation is a lazy provider capability. Opening Nolane Studio does not construct or download a local image model.
+- A generated scene visual is keyed deterministically by hardened prompt, provider and requested size.
+- Each scene owns a stable generated media slot `image-{scene_id}`; cache hits reuse that asset and prompt/provider/size changes invalidate it.
+- The generated visual is also represented by one persisted Canvas image object at the back of the scene stack, making the Canvas/Object Engine and render plan authoritative rather than keeping generated files in side metadata only.
+- Generated-object ownership is explicit. Stale metadata must never hijack or overwrite a manual image layer.
+- Studio exposes **Generate image** and **Generate All Images**; Providers exposes Image endpoint/model configuration and environment overrides.
+- Generated images populate the scene image metadata already consumed by v0.4 AI Analyze.
+- Existing v0.3 Canvas/Object and v0.4 AI Analyze/Voice storage/render/export contracts remain authoritative.
+
+## Evidence-limited boundaries
+
+- Recovered documentation states that exact readable labels are overlaid deterministically after image generation, but the source and layout schema for those labels is not sufficiently recovered in the current evidence. This branch does not invent one.
+- Non-empty legacy multi-track `clips`, `videoClips` and `audioClips` entries remain fail-closed because their per-entry schema is not yet sufficiently recovered.
+- These boundaries are explicit remaining forensic work, not silent feature substitutions.
 
 ## Product constraints retained
 
 - Windows desktop remains the primary target, including 8 GB RAM machines.
 - No FREE/PRO feature naming, paywall, license verification, mandatory login, or mandatory account gate.
-- No mandatory Ollama, OmniVoice, ComfyUI, local LLM, local speech model, or model-weight download merely to open/use the editor.
+- No mandatory Ollama, OmniVoice, ComfyUI, local LLM, local speech model, local image model, or model-weight download merely to open/use the editor.
 - No provider-specific SDK is required for the OpenAI-compatible HTTP paths in this slice.
-- Subsequent forensic parity work must restore behavior supported by recovered evidence unless the product scope is explicitly changed.
+- Subsequent parity work must be supported by recovered evidence or be labeled explicitly as new product design.
