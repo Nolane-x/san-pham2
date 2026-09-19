@@ -321,3 +321,23 @@ def test_visual_object_update_rejects_non_finite_geometry(tmp_path, field):
             **{field: float("inf")},
         )
 
+@pytest.mark.parametrize("payload", [[], [["fill", "#ffffff"]]])
+def test_visual_object_add_rejects_non_mapping_payload(tmp_path, payload):
+    store, scene_id = _store(tmp_path)
+
+    with pytest.raises(ValueError, match=r"^payload must be a mapping$"):
+        store.add_visual_object(
+            scene_id,
+            "shape",
+            payload=payload,
+        )
+
+
+@pytest.mark.parametrize("payload", [[], [["fill", "#ffffff"]]])
+def test_visual_object_update_rejects_non_mapping_payload(tmp_path, payload):
+    store, scene_id = _store(tmp_path)
+    object_id = store.add_visual_object(scene_id, "shape", name="Payload writer")
+
+    with pytest.raises(ValueError, match=r"^payload must be a mapping$"):
+        store.update_visual_object(object_id, payload=payload)
+
