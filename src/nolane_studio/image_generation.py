@@ -10,7 +10,11 @@ from typing import Any
 from .ai.prompts import build_image_prompt
 from .domain import ImageRequest, Scene
 from .providers.registry import ProviderRegistry
-from .readable_labels import sync_readable_label_objects, validate_readable_label_metadata
+from .readable_labels import (
+    sync_readable_label_objects,
+    validate_readable_label_metadata,
+    validate_readable_label_object_state,
+)
 from .storage.store import ProjectStore
 
 
@@ -188,12 +192,13 @@ class ImageGenerationService:
         output_dir = self.workspace_root / "images" / project_id
         path = output_dir / f"{scene_id}.png"
         metadata = dict(scene.get("metadata") or {})
-        validate_readable_label_metadata(metadata)
+        validate_readable_label_object_state(self.store, scene_id)
         existing_media = {
             item["id"]: item for item in self.store.list_media(project_id)
         }
 
         if metadata.get("image_cache_key") == cache_key and path.is_file():
+            validate_readable_label_metadata(metadata)
             if media_id not in existing_media:
                 self.store.add_media(
                     project_id,
@@ -239,6 +244,10 @@ class ImageGenerationService:
             path=path,
             metadata=metadata,
         )
+        # Grounding is derived from image bytes. A newly generated image can
+        # move or replace the grounded objects, so old analysis/label boxes are
+        # stale and must not be projected onto the new composition.
+        metadata.pop("ai_analysis", None)
         metadata.update(
             {
                 "visual_media_id": media_id,
