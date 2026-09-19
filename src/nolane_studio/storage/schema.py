@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS visual_editor_timeline_state (
     video_clips_json TEXT NOT NULL DEFAULT '[]',
     audio_clips_json TEXT NOT NULL DEFAULT '[]',
     media_order_json TEXT NOT NULL DEFAULT '[]',
+    transitions_json TEXT NOT NULL DEFAULT '[]',
     revision INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(project_id) REFERENCES batch_projects(id) ON DELETE CASCADE
