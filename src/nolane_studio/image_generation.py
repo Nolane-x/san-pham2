@@ -10,6 +10,7 @@ from typing import Any
 from .ai.prompts import build_image_prompt
 from .domain import ImageRequest, Scene
 from .providers.registry import ProviderRegistry
+from .readable_labels import sync_readable_label_objects, validate_readable_label_metadata
 from .storage.store import ProjectStore
 
 
@@ -187,6 +188,7 @@ class ImageGenerationService:
         output_dir = self.workspace_root / "images" / project_id
         path = output_dir / f"{scene_id}.png"
         metadata = dict(scene.get("metadata") or {})
+        validate_readable_label_metadata(metadata)
         existing_media = {
             item["id"]: item for item in self.store.list_media(project_id)
         }
@@ -209,6 +211,7 @@ class ImageGenerationService:
             if metadata.get("image_object_id") != object_id:
                 metadata["image_object_id"] = object_id
                 self.store.update_scene(scene_id, metadata=metadata)
+            sync_readable_label_objects(self.store, scene_id, metadata)
             return ImageArtifact(scene_id=scene_id, media_id=media_id, path=str(path))
 
         provider = self.providers.get(provider_name)
@@ -248,6 +251,7 @@ class ImageGenerationService:
             }
         )
         self.store.update_scene(scene_id, metadata=metadata)
+        sync_readable_label_objects(self.store, scene_id, metadata)
         return ImageArtifact(scene_id=scene_id, media_id=media_id, path=str(path))
 
     def generate_project(
