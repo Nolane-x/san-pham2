@@ -258,3 +258,43 @@ def test_project_exporter_rejects_scene_id_with_surrounding_whitespace_before_an
             assert render_calls == []
             assert media.calls == []
             assert not output.exists()
+
+
+
+def test_scene_reader_rejects_blank_persisted_text(tmp_path):
+    store, _first, second = _store(tmp_path)
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_scenes SET text=? WHERE id=?",
+            ("   ", second["id"]),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^scene {second['id']} text must not be blank$",
+    ):
+        store.list_scenes("p1")
+
+
+def test_project_exporter_rejects_later_blank_scene_text_before_any_render(tmp_path):
+    store, _first, second = _store(tmp_path)
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_scenes SET text=? WHERE id=?",
+            ("   ", second["id"]),
+        )
+
+    media = FakeMediaExporter()
+    render_calls = []
+    output = tmp_path / "never-blank-scene-text.mp4"
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^scene {second['id']} text must not be blank$",
+    ):
+        try:
+            _exporter(store, media, render_calls).export("p1", output)
+        finally:
+            assert render_calls == []
+            assert media.calls == []
+            assert not output.exists()
