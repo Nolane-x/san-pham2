@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -331,12 +333,54 @@ class CanvasEditor(QWidget):
                 self._graphics_scene.removeItem(self._stroke_preview)
             self._stroke_preview = None
 
+    @staticmethod
+    def _validated_z_index(model: Mapping[str, Any]) -> int:
+        object_id = str(model.get("id", "")).strip()
+        value = model.get("z_index", 0)
+        try:
+            if isinstance(value, float):
+                if not math.isfinite(value) or not value.is_integer():
+                    raise ValueError
+                index = int(value)
+            elif isinstance(value, (int, str)):
+                index = int(value)
+            else:
+                index = int(value)
+                if value != index:
+                    raise ValueError
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(
+                f"visual object {object_id} z_index must be a non-negative integer"
+            ) from None
+        if index < 0:
+            raise ValueError(
+                f"visual object {object_id} z_index must be a non-negative integer"
+            )
+        return index
+
+    @classmethod
+    def _preflight_model(cls, model: Mapping[str, Any]) -> int:
+        object_id = str(model.get("id", "")).strip()
+        index = cls._validated_z_index(model)
+        payload = model.get("payload")
+        if payload is not None and not isinstance(payload, Mapping):
+            raise ValueError(f"visual object {object_id} payload must be a mapping")
+        return index
+
     def set_objects(self, objects: list[dict[str, Any]]) -> None:
+        indexed = [(self._preflight_model(model), model) for model in objects]
+        ordered = [
+            model
+            for _, model in sorted(
+                indexed,
+                key=lambda pair: (pair[0], str(pair[1].get("id", ""))),
+            )
+        ]
+
         self.cancel_stroke()
         self._graphics_scene.clear()
         self._stroke_preview = None
         self._items.clear()
-        ordered = sorted(objects, key=lambda row: (int(row.get("z_index", 0)), str(row.get("id", ""))))
         self._ordered_ids = [str(row["id"]) for row in ordered]
         for model in ordered:
             if not bool(model.get("visible", True)):
