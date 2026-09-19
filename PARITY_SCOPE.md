@@ -11,7 +11,8 @@ This branch continues the clean source rebuild of the user's legacy Windows crea
 - Normalized boxes map directly onto the 1280×720 recovered reference canvas. The text itself is exact; typography is a neutral rebuild default.
 - Label synchronization is idempotent by analysis slot, preserves user-created text and every non-owned layer, and deletes only stale objects marked with the v0.11 Nolane readable-label owner contract.
 - The whole requested label set is validated before label mutation. Non-mapping analysis state, blank labels, malformed/non-finite/out-of-range boxes and non-positive-area boxes fail closed.
-- Automatic label synchronization runs after generated-image materialization and after AI Analyze, covering both image-first and analysis-first workflows.
+- AI Analyze materializes labels after the visual exists; cache hits for the same generated image resynchronize idempotently.
+- A provider call that produces a new generated image invalidates prior `ai_analysis` grounding and service-owned readable labels because normalized boxes are derived from the previous image bytes. Failed generation leaves the prior derived state untouched.
 - Non-whiteboard visual styles are outside this automatic overlay slice and are left unchanged.
 - Existing v0.3 Canvas/Object through v0.10 Scene Clip Edit authority remains unchanged.
 
