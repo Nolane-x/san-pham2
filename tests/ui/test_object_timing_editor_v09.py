@@ -133,3 +133,31 @@ def test_saving_selected_object_timing_preserves_other_object_entries(tmp_path):
         "push": 0.2,
     }
     assert store.get_scene_render_settings(scene_id)["object_timing_mode"] == "custom"
+
+
+def test_duplicate_scene_remaps_custom_timing_to_copied_object_ids(tmp_path):
+    store, page, _scene_id, first, second = _page(tmp_path)
+
+    page._duplicate_selected_scene()
+
+    scenes = store.list_scenes("p1")
+    assert len(scenes) == 2
+    duplicate_id = scenes[1]["id"]
+    copied_objects = {row["name"]: row["id"] for row in store.list_visual_objects(duplicate_id)}
+    timing = _timing_by_id(store, duplicate_id)
+
+    assert set(timing) == set(copied_objects.values())
+    assert first not in timing
+    assert second not in timing
+    assert timing[copied_objects["Chart"]] == {
+        "object_id": copied_objects["Chart"],
+        "pause": 0.5,
+        "draw": 1.25,
+        "push": 0.25,
+    }
+    assert timing[copied_objects["Caption"]] == {
+        "object_id": copied_objects["Caption"],
+        "pause": 0.1,
+        "draw": 2.5,
+        "push": 0.0,
+    }
