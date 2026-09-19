@@ -154,11 +154,11 @@ class FakeImageProvider:
         return b"PNG-DATA"
 
 
-def test_image_generation_automatically_materializes_existing_analysis_labels(tmp_path):
+def test_image_generation_cache_hit_preserves_synced_analysis_labels(tmp_path):
     from nolane_studio.image_generation import ImageGenerationService
+    from nolane_studio.readable_labels import sync_readable_label_objects
 
-    metadata = _analysis(_object("Revenue", [0.10, 0.20, 0.40, 0.35]))
-    store, scene_id, manual_id = _store(tmp_path, metadata)
+    store, scene_id, manual_id = _store(tmp_path, {})
     provider = FakeImageProvider()
     registry = ProviderRegistry()
     registry.register(
@@ -169,12 +169,44 @@ def test_image_generation_automatically_materializes_existing_analysis_labels(tm
     service = ImageGenerationService(store, registry, tmp_path / "generated")
 
     service.generate_scene("p1", scene_id, provider_name="image-test")
-    first = _owned(store.list_visual_objects(scene_id))
+    metadata = dict(store.list_scenes("p1")[0]["metadata"])
+    metadata.update(_analysis(_object("Revenue", [0.10, 0.20, 0.40, 0.35])))
+    store.update_scene(scene_id, metadata=metadata)
+    first_ids = sync_readable_label_objects(store, scene_id, metadata)
+
     service.generate_scene("p1", scene_id, provider_name="image-test")
     second = _owned(store.list_visual_objects(scene_id))
 
     assert len(provider.requests) == 1
-    assert len(first) == 1
-    assert [row["id"] for row in second] == [first[0]["id"]]
-    assert first[0]["payload"]["text"] == "Revenue"
+    assert [row["id"] for row in second] == list(first_ids)
+    assert second[0]["payload"]["text"] == "Revenue"
     assert any(row["id"] == manual_id for row in store.list_visual_objects(scene_id))
+
+
+def test_fresh_image_generation_invalidates_stale_analysis_and_owned_labels(tmp_path):
+    from nolane_studio.image_generation import ImageGenerationService
+    from nolane_studio.readable_labels import sync_readable_label_objects
+
+    metadata = _analysis(_object("Old revenue", [0.10, 0.20, 0.40, 0.35]))
+    store, scene_id, manual_id = _store(tmp_path, metadata)
+    sync_readable_label_objects(store, scene_id, metadata)
+    assert len(_owned(store.list_visual_objects(scene_id))) == 1
+
+    provider = FakeImageProvider()
+    registry = ProviderRegistry()
+    registry.register(
+        "image-test",
+        ProviderCapabilities(image=True),
+        lambda: provider,
+    )
+    ImageGenerationService(
+        store,
+        registry,
+        tmp_path / "generated",
+    ).generate_scene("p1", scene_id, provider_name="image-test")
+
+    scene = store.list_scenes("p1")[0]
+    assert "ai_analysis" not in scene["metadata"]
+    assert _owned(store.list_visual_objects(scene_id)) == []
+    assert any(row["id"] == manual_id for row in store.list_visual_objects(scene_id))
+    assert len(provider.requests) == 1
