@@ -483,6 +483,12 @@ class ProjectStore:
 
 
     @staticmethod
+    def _encode_visual_object_flag(value: Any, *, field: str) -> int:
+        if type(value) is not bool:
+            raise ValueError(f"{field} must be a boolean")
+        return 1 if value else 0
+
+    @staticmethod
     def _decode_stored_object_flag(value: Any, *, object_id: str, field: str) -> bool:
         if type(value) is not int or value not in {0, 1}:
             raise ValueError(
@@ -566,8 +572,8 @@ class ProjectStore:
                     height_value,
                     rotation_value,
                     opacity_value,
-                    1 if visible else 0,
-                    1 if locked else 0,
+                    self._encode_visual_object_flag(visible, field="visible"),
+                    self._encode_visual_object_flag(locked, field="locked"),
                     json.dumps(self._visual_payload_mapping(payload), ensure_ascii=False, separators=(",", ":")),
                 ),
             )
@@ -709,10 +715,10 @@ class ProjectStore:
                 values.append(opacity_value)
             if visible is not None:
                 updates.append("visible=?")
-                values.append(1 if visible else 0)
+                values.append(self._encode_visual_object_flag(visible, field="visible"))
             if locked is not None:
                 updates.append("locked=?")
-                values.append(1 if locked else 0)
+                values.append(self._encode_visual_object_flag(locked, field="locked"))
             if payload is not None:
                 updates.append("payload_json=?")
                 values.append(
