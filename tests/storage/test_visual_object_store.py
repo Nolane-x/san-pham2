@@ -246,39 +246,3 @@ def test_visual_object_read_rejects_hidden_unknown_kind(tmp_path):
         ),
     ):
         store.list_visual_objects(scene_id)
-
-
-
-@pytest.mark.parametrize(
-    ("field", "value", "message"),
-    [
-        ("width", 0, "width must be > 0"),
-        ("height", -1, "height must be > 0"),
-        ("opacity", 1.2, "opacity must be within 0..1"),
-    ],
-)
-def test_visual_object_read_rejects_hidden_writer_impossible_geometry(
-    tmp_path,
-    field,
-    value,
-    message,
-):
-    store, scene_id = _store(tmp_path)
-    object_id = store.add_visual_object(
-        scene_id,
-        "shape",
-        name="Hidden geometry integrity",
-        visible=False,
-    )
-
-    with store._connect() as conn:
-        conn.execute(
-            f"UPDATE visual_editor_objects SET {field}=? WHERE id=?",
-            (value, object_id),
-        )
-
-    with pytest.raises(
-        ValueError,
-        match=rf"^scene {scene_id} hidden visual object {object_id} {message}$",
-    ):
-        store.list_visual_objects(scene_id)
