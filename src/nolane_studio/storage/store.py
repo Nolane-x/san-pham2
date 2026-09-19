@@ -487,16 +487,10 @@ class ProjectStore:
                 (scene_id,),
             ).fetchall()
         result: list[dict[str, Any]] = []
-        seen_z_indices: set[int] = set()
+        seen_z_visibility: dict[int, bool] = {}
         for row in rows:
             item = dict(row)
             object_id = str(item["id"])
-            z_index = int(item["z_index"])
-            if z_index in seen_z_indices:
-                raise ValueError(
-                    f"scene {scene_id} visual object z_index {z_index} must be unique"
-                )
-            seen_z_indices.add(z_index)
             item["kind"] = self._decode_stored_object_kind(
                 item["kind"],
                 object_id=object_id,
@@ -506,6 +500,14 @@ class ProjectStore:
                 object_id=object_id,
                 field="visible",
             )
+            z_index = int(item["z_index"])
+            prior_visible = seen_z_visibility.get(z_index)
+            if prior_visible is not None and not (prior_visible and item["visible"]):
+                raise ValueError(
+                    f"scene {scene_id} visual object z_index {z_index} must be unique"
+                )
+            if prior_visible is None:
+                seen_z_visibility[z_index] = item["visible"]
             item["locked"] = self._decode_stored_object_flag(
                 item["locked"],
                 object_id=object_id,
