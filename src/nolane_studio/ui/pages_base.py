@@ -1005,7 +1005,7 @@ class ProvidersPage(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(38, 28, 38, 28)
         outer.setSpacing(20)
-        outer.addWidget(_heading("Provider layer", "Bring the model you want", "Analysis and voice are capabilities, not hard-coded vendors."))
+        outer.addWidget(_heading("Provider layer", "Bring the model you want", "Analysis, image, vision, speech and voice are capabilities, not hard-coded vendors."))
 
         safe = Surface(accent=True)
         safe_layout = QHBoxLayout(safe)
@@ -1035,6 +1035,8 @@ class ProvidersPage(QWidget):
         rows = [
             ("Analysis endpoint", "ai_endpoint", current.analysis_base_url, "https://provider.example/v1"),
             ("Analysis model", "ai_model", current.analysis_model, "text-analysis-model"),
+            ("Image endpoint", "image_endpoint", current.image_base_url, "https://provider.example/v1"),
+            ("Image model", "image_model", current.image_model, "image-model"),
             ("Vision endpoint", "vision_endpoint", current.vision_base_url, "https://provider.example/v1"),
             ("Vision model", "vision_model", current.vision_model, "vision-model"),
             ("STT endpoint", "stt_endpoint", current.stt_base_url, "https://provider.example/v1"),
@@ -1065,7 +1067,7 @@ class ProvidersPage(QWidget):
                 row.addWidget(Dot("#54D49A"))
                 row.addWidget(QLabel(descriptor.name))
                 row.addStretch(1)
-                caps = [name for name in ("analysis", "vision", "stt", "tts", "clone", "design") if getattr(descriptor.capabilities, name)]
+                caps = [name for name in ("analysis", "image", "vision", "stt", "tts", "clone", "design") if getattr(descriptor.capabilities, name)]
                 chip = QLabel(" · ".join(caps) or "registered")
                 chip.setObjectName("chip")
                 row.addWidget(chip)
@@ -1081,6 +1083,8 @@ class ProvidersPage(QWidget):
         settings = ProviderSettings(
             analysis_base_url=self.ai_endpoint.text().strip(),
             analysis_model=self.ai_model.text().strip(),
+            image_base_url=self.image_endpoint.text().strip(),
+            image_model=self.image_model.text().strip(),
             vision_base_url=self.vision_endpoint.text().strip(),
             vision_model=self.vision_model.text().strip(),
             stt_base_url=self.stt_endpoint.text().strip(),
