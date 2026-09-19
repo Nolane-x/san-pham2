@@ -10,6 +10,8 @@ from pathlib import Path
 class ProviderSettings:
     analysis_base_url: str = ""
     analysis_model: str = ""
+    image_base_url: str = ""
+    image_model: str = ""
     vision_base_url: str = ""
     vision_model: str = ""
     stt_base_url: str = ""
