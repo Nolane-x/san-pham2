@@ -10,6 +10,10 @@ from pathlib import Path
 class ProviderSettings:
     analysis_base_url: str = ""
     analysis_model: str = ""
+    vision_base_url: str = ""
+    vision_model: str = ""
+    stt_base_url: str = ""
+    stt_model: str = ""
     tts_base_url: str = ""
     tts_model: str = ""
 
@@ -30,11 +34,19 @@ class SettingsStore:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, TypeError):
             return ProviderSettings()
-        allowed = {field: str(raw.get(field, "")).strip() for field in ProviderSettings.__dataclass_fields__}
+        if not isinstance(raw, dict):
+            return ProviderSettings()
+        allowed = {
+            field: str(raw.get(field, "")).strip()
+            for field in ProviderSettings.__dataclass_fields__
+        }
         return ProviderSettings(**allowed)
 
     def save(self, settings: ProviderSettings) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.path.with_suffix(self.path.suffix + ".tmp")
-        temp.write_text(json.dumps(asdict(settings), ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.write_text(
+            json.dumps(asdict(settings), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         temp.replace(self.path)

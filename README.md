@@ -1,6 +1,6 @@
 # Nolane Studio
 
-**Nolane Studio** is a local-first Windows creator workspace for turning scripts, images and video into structured visual stories without forcing a heavy local AI stack onto the machine.
+**Nolane Studio** is a local-first Windows creator workspace for turning scripts, images, narration audio and video into structured visual stories without forcing a heavy local AI stack onto the machine.
 
 The product is a clean rebuild based on behavior recovered from a legacy Windows creator application. Its identity, branding, UI, packaging and source code are new. No legacy logos, product artwork, paywall, license gate, telemetry gate, updater gate, mandatory Ollama runtime or mandatory local speech model are carried forward.
 
@@ -8,12 +8,13 @@ The product is a clean rebuild based on behavior recovered from a legacy Windows
 
 - **Create** — paste a script and generate a deterministic local scene plan before any provider is contacted.
 - **Studio** — creator workspace with Scenes, Canvas, Inspector and Timeline regions.
-- **Media import** — images and video are copied into the local project workspace.
+- **Media import and attachment** — images, narration audio and video are copied into the local project workspace and can be attached explicitly to scenes.
+- **AI Analyze** — configured STT supplies narration timing, configured vision supplies grounded object identity/location, and deterministic local logic joins the result into scene metadata with content-based caching.
+- **Voice generation** — per-scene Generate voice and project-wide Voice From Content use configurable TTS providers and stable cached scene media slots.
 - **Windows video export** — media is normalized sequentially with FFmpeg and exported as H.264/AAC MP4 without loading all frames into RAM.
 - **Library** — durable local SQLite projects with no expiry timer.
-- **Providers** — configurable analysis and TTS endpoints; environment variables can override local settings for automation.
-- **Low-memory startup** — opening the app does not start a local LLM, TTS model or image model.
-- **Voice architecture** — capability-based provider contracts support synthesis today and leave room for cloning/design/list-voices adapters without binding the product to one engine.
+- **Providers** — configurable Analysis, Vision, STT and TTS endpoints; environment variables can override local settings for automation.
+- **Low-memory startup** — opening the app does not start a local LLM, TTS model, speech model or image model.
 
 ## Product shape
 
@@ -30,7 +31,7 @@ Library
   durable local projects + imported media
 
 Providers
-  analysis API / TTS API / optional local command adapters
+  analysis API / vision API / STT API / TTS API
 ```
 
 ## Windows release
@@ -75,6 +76,10 @@ Settings can be entered from the Providers screen. Automation can override them 
 ```text
 NOLANE_STUDIO_AI_BASE_URL=https://provider.example/v1
 NOLANE_STUDIO_AI_MODEL=analysis-model
+NOLANE_STUDIO_VISION_BASE_URL=https://provider.example/v1
+NOLANE_STUDIO_VISION_MODEL=vision-model
+NOLANE_STUDIO_STT_BASE_URL=https://provider.example/v1
+NOLANE_STUDIO_STT_MODEL=transcription-model
 NOLANE_STUDIO_TTS_BASE_URL=https://provider.example/v1
 NOLANE_STUDIO_TTS_MODEL=speech-model
 NOLANE_STUDIO_API_KEY=...
@@ -87,7 +92,7 @@ The API key is intentionally **not** persisted in `settings.json`.
 - `nolane_studio.domain` — pure scene/project/render/voice contracts.
 - `nolane_studio.storage` — SQLite project, media and timeline state.
 - `nolane_studio.ai` — deterministic scene planning and prompt hardening.
-- `nolane_studio.providers` — lazy analysis/TTS providers.
+- `nolane_studio.providers` — lazy Analysis/Vision/STT/TTS providers.
 - `nolane_studio.render` — FFmpeg command planning and low-memory mixed-media export.
 - `nolane_studio.ui` — PySide6 desktop workspace.
 

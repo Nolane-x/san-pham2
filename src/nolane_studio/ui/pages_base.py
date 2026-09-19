@@ -192,6 +192,7 @@ class StudioPage(QWidget):
         toolbar = QFrame()
         toolbar.setObjectName("topbar")
         tb = QHBoxLayout(toolbar)
+        self.toolbar_layout = tb
         tb.setContentsMargins(20, 10, 20, 10)
         tb.setSpacing(8)
         self.project_label = QLabel("No project open")
@@ -258,11 +259,13 @@ class StudioPage(QWidget):
         scenes_layout.addSpacing(8)
 
         media_header = QHBoxLayout()
+        self.media_header_layout = media_header
         media_title = QLabel("Media")
         media_title.setObjectName("sectionTitle")
         media_header.addWidget(media_title)
         media_header.addStretch(1)
         import_media = QPushButton("Import")
+        self.import_media_button = import_media
         import_media.setObjectName("ghost")
         import_media.clicked.connect(self._import_media)
         media_header.addWidget(import_media)
@@ -304,6 +307,7 @@ class StudioPage(QWidget):
         inspector.setMinimumWidth(250)
         inspector.setMaximumWidth(330)
         inspector_layout = QVBoxLayout(inspector)
+        self.inspector_layout = inspector_layout
         inspector_layout.setContentsMargins(16, 14, 16, 14)
         inspector_layout.setSpacing(10)
         inspector_layout.addWidget(SectionTitle("Selected scene", "Inspector"))
@@ -355,6 +359,7 @@ class StudioPage(QWidget):
         self.scene_text_edit.setMinimumHeight(92)
         inspector_layout.addWidget(self.scene_text_edit)
         save_scene = QPushButton("Save scene")
+        self.save_scene_button = save_scene
         save_scene.setObjectName("primary")
         save_scene.clicked.connect(self._save_selected_scene)
         inspector_layout.addWidget(save_scene)
@@ -828,7 +833,7 @@ class StudioPage(QWidget):
             return
         media = self.store.list_media(self.project_id)
         if not media:
-            self.media_list.addItem("Drop in images or video")
+            self.media_list.addItem("Drop in image, video or audio")
             return
         for index, item in enumerate(media):
             icon = "IMG" if item["kind"] == "image" else ("VID" if item["kind"] == "video" else "AUD")
@@ -867,7 +872,7 @@ class StudioPage(QWidget):
             self,
             "Import media",
             "",
-            "Media (*.png *.jpg *.jpeg *.webp *.bmp *.mp4 *.mov *.mkv *.webm);;All files (*)",
+            "Media (*.png *.jpg *.jpeg *.webp *.bmp *.mp4 *.mov *.mkv *.webm *.mp3 *.wav *.m4a *.flac *.ogg);;All files (*)",
         )
         if not paths:
             return
@@ -875,13 +880,14 @@ class StudioPage(QWidget):
         media_root.mkdir(parents=True, exist_ok=True)
         image_ext = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
         video_ext = {".mp4", ".mov", ".mkv", ".webm"}
+        audio_ext = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
         imported = 0
         for source_raw in paths:
             source = Path(source_raw)
             ext = source.suffix.lower()
-            if ext not in image_ext | video_ext:
+            if ext not in image_ext | video_ext | audio_ext:
                 continue
-            kind = "image" if ext in image_ext else "video"
+            kind = "image" if ext in image_ext else ("video" if ext in video_ext else "audio")
             target = media_root / f"{uuid.uuid4().hex[:8]}-{source.name}"
             shutil.copy2(source, target)
             self.store.add_media(self.project_id, kind, source.name, str(target))
@@ -1019,27 +1025,33 @@ class ProvidersPage(QWidget):
         cfg.setContentsMargins(20, 18, 20, 18)
         cfg.setHorizontalSpacing(16)
         cfg.setVerticalSpacing(12)
-        cfg.addWidget(SectionTitle("API", "Connection settings", "Environment variables remain supported for automation."), 0, 0, 1, 2)
-        cfg.addWidget(QLabel("Analysis endpoint"), 1, 0)
-        self.ai_endpoint = QLineEdit(current.analysis_base_url)
-        self.ai_endpoint.setPlaceholderText("https://provider.example/v1")
-        cfg.addWidget(self.ai_endpoint, 1, 1)
-        cfg.addWidget(QLabel("Analysis model"), 2, 0)
-        self.ai_model = QLineEdit(current.analysis_model)
-        self.ai_model.setPlaceholderText("model-name")
-        cfg.addWidget(self.ai_model, 2, 1)
-        cfg.addWidget(QLabel("TTS endpoint"), 3, 0)
-        self.tts_endpoint = QLineEdit(current.tts_base_url)
-        self.tts_endpoint.setPlaceholderText("https://provider.example/v1")
-        cfg.addWidget(self.tts_endpoint, 3, 1)
-        cfg.addWidget(QLabel("TTS model"), 4, 0)
-        self.tts_model = QLineEdit(current.tts_model)
-        self.tts_model.setPlaceholderText("speech-model")
-        cfg.addWidget(self.tts_model, 4, 1)
+        cfg.addWidget(
+            SectionTitle("API", "Connection settings", "Environment variables remain supported for automation."),
+            0,
+            0,
+            1,
+            2,
+        )
+        rows = [
+            ("Analysis endpoint", "ai_endpoint", current.analysis_base_url, "https://provider.example/v1"),
+            ("Analysis model", "ai_model", current.analysis_model, "text-analysis-model"),
+            ("Vision endpoint", "vision_endpoint", current.vision_base_url, "https://provider.example/v1"),
+            ("Vision model", "vision_model", current.vision_model, "vision-model"),
+            ("STT endpoint", "stt_endpoint", current.stt_base_url, "https://provider.example/v1"),
+            ("STT model", "stt_model", current.stt_model, "transcription-model"),
+            ("TTS endpoint", "tts_endpoint", current.tts_base_url, "https://provider.example/v1"),
+            ("TTS model", "tts_model", current.tts_model, "speech-model"),
+        ]
+        for row, (label, attr, value, placeholder) in enumerate(rows, start=1):
+            cfg.addWidget(QLabel(label), row, 0)
+            edit = QLineEdit(value)
+            edit.setPlaceholderText(placeholder)
+            setattr(self, attr, edit)
+            cfg.addWidget(edit, row, 1)
         save = QPushButton("Save locally")
         save.setObjectName("primary")
         save.clicked.connect(self._save_settings)
-        cfg.addWidget(save, 5, 1, alignment=Qt.AlignmentFlag.AlignRight)
+        cfg.addWidget(save, len(rows) + 1, 1, alignment=Qt.AlignmentFlag.AlignRight)
         outer.addWidget(config)
 
         status = Surface()
@@ -1053,7 +1065,7 @@ class ProvidersPage(QWidget):
                 row.addWidget(Dot("#54D49A"))
                 row.addWidget(QLabel(descriptor.name))
                 row.addStretch(1)
-                caps = [name for name in ("analysis", "tts", "clone", "design") if getattr(descriptor.capabilities, name)]
+                caps = [name for name in ("analysis", "vision", "stt", "tts", "clone", "design") if getattr(descriptor.capabilities, name)]
                 chip = QLabel(" · ".join(caps) or "registered")
                 chip.setObjectName("chip")
                 row.addWidget(chip)
@@ -1069,6 +1081,10 @@ class ProvidersPage(QWidget):
         settings = ProviderSettings(
             analysis_base_url=self.ai_endpoint.text().strip(),
             analysis_model=self.ai_model.text().strip(),
+            vision_base_url=self.vision_endpoint.text().strip(),
+            vision_model=self.vision_model.text().strip(),
+            stt_base_url=self.stt_endpoint.text().strip(),
+            stt_model=self.stt_model.text().strip(),
             tts_base_url=self.tts_endpoint.text().strip(),
             tts_model=self.tts_model.text().strip(),
         )
