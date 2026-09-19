@@ -511,6 +511,142 @@ class ProjectSceneExporter:
         self.video_renderer = video_renderer or SceneVideoCompositor().render
         self.whiteboard_renderer = whiteboard_renderer or WhiteboardSceneCompositor().render
 
+    def preview_scene(
+        self,
+        project_id: str,
+        scene_id: str,
+        output: str | Path,
+        *,
+        width: int = 1280,
+        height: int = 720,
+        fps: int = 24,
+    ) -> Path:
+        """Render one selected scene through the authoritative scene pipeline.
+
+        Scene preview deliberately ignores project ordering/transitions and the
+        still-unrecovered legacy multi-track buckets. It does honor the selected
+        scene's persisted canvas/render state, narration and rebuild-owned
+        sceneEdits trim/speed contract. Other scenes are not rendered merely
+        because the user previews the current scene.
+        """
+        plans = build_scene_render_plan(self.store, project_id)
+        if not plans:
+            raise ValueError("project has no scenes to preview")
+        validate_project_scene_ordering(plans)
+
+        normalized_scene_id = str(scene_id).strip()
+        if not normalized_scene_id:
+            raise ValueError("scene_id must not be blank")
+        plan = next(
+            (item for item in plans if item.scene_id == normalized_scene_id),
+            None,
+        )
+        if plan is None:
+            raise KeyError(normalized_scene_id)
+
+        validate_project_scene_media([plan])
+        validate_project_scene_narration([plan])
+        validate_project_scene_render_state([plan])
+        validate_project_scene_composition([plan])
+        normalize_ffmpeg_render_geometry(width, height, fps)
+
+        timeline_state = self.store.load_timeline(project_id)
+        validate_persisted_scene_edits(
+            {item.scene_id: item.total_duration for item in plans},
+            timeline_state,
+        )
+        raw_scene_edits = dict(timeline_state or {}).get("sceneEdits", [])
+        selected_edit_state = {
+            "sceneEdits": [
+                dict(item)
+                for item in raw_scene_edits
+                if str(item.get("scene_id", "")).strip() == normalized_scene_id
+            ]
+        }
+
+        output_path = Path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        narration_audio = persisted_scene_narration(plan)
+
+        with tempfile.TemporaryDirectory(prefix="nolane-studio-preview-") as temp_raw:
+            temp = Path(temp_raw)
+            has_video = any(
+                str(obj.get("kind", "")).strip().lower() == "video"
+                and bool(obj.get("visible", True))
+                for obj in plan.objects
+            )
+
+            if has_video:
+                scene_video = temp / f"preview-{plan.scene_id}.mp4"
+                rendered_video = Path(
+                    self.video_renderer(
+                        plan,
+                        scene_video,
+                        width=width,
+                        height=height,
+                        fps=fps,
+                    )
+                )
+                clip = ExportClip(
+                    str(rendered_video),
+                    "video",
+                    duration=plan.total_duration,
+                    trim_start=0.0,
+                    trim_end=plan.total_duration,
+                    clip_id=plan.scene_id,
+                    narration_audio=narration_audio,
+                )
+            elif plan.profile.style == "whiteboard" and plan.object_timing:
+                scene_whiteboard = temp / f"preview-{plan.scene_id}.mp4"
+                rendered_whiteboard = Path(
+                    self.whiteboard_renderer(
+                        plan,
+                        scene_whiteboard,
+                        width=width,
+                        height=height,
+                        fps=fps,
+                    )
+                )
+                clip = ExportClip(
+                    str(rendered_whiteboard),
+                    "video",
+                    duration=plan.total_duration,
+                    trim_start=0.0,
+                    trim_end=plan.total_duration,
+                    clip_id=plan.scene_id,
+                    narration_audio=narration_audio,
+                )
+            else:
+                snapshot = temp / f"preview-{plan.scene_id}.png"
+                rendered = Path(self.snapshot_renderer(plan, snapshot))
+                clip = ExportClip(
+                    str(rendered),
+                    "image",
+                    duration=plan.total_duration,
+                    render_profile={
+                        "style": plan.profile.style,
+                        "camera": plan.profile.camera,
+                        "reveal_duration": plan.profile.reveal_duration,
+                        "hold_duration": plan.profile.hold_duration,
+                    },
+                    clip_id=plan.scene_id,
+                    narration_audio=narration_audio,
+                )
+
+            preview_clips = apply_persisted_scene_edits(
+                [clip],
+                selected_edit_state,
+            )
+            return Path(
+                self.media_exporter.export(
+                    preview_clips,
+                    output_path,
+                    width=width,
+                    height=height,
+                    fps=fps,
+                )
+            )
+
     def export(
         self,
         project_id: str,
