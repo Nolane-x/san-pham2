@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 from nolane_studio.app import build_services
-from nolane_studio.config import ProviderSettings
+from nolane_studio.config import ProviderSettings, SettingsStore
 from nolane_studio.providers import GenericHttpTTSProvider
 from nolane_studio.providers.http import HttpResponse
 
@@ -116,3 +119,21 @@ def test_generic_advanced_voice_adapter_fails_closed_without_catalog_endpoint():
 
     with pytest.raises(RuntimeError, match="voice catalog"):
         provider.list_voices()
+
+
+def test_providers_page_persists_advanced_voice_endpoints(tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    from nolane_studio.ui.pages_base import ProvidersPage
+
+    QApplication.instance() or QApplication([])
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    page = ProvidersPage(lambda: [], settings_store)
+
+    page.tts_advanced_endpoint.setText("https://voice.example/tts")
+    page.tts_voices_endpoint.setText("https://voice.example/voices")
+    page._save_settings()
+
+    saved = settings_store.load()
+    assert saved.tts_advanced_endpoint == "https://voice.example/tts"
+    assert saved.tts_voices_endpoint == "https://voice.example/voices"
