@@ -1,27 +1,26 @@
-# Forensic parity scope — v0.7.0
+# Forensic parity scope — v0.8.0
 
 This branch continues the clean source rebuild of the user's legacy Windows creator application. The recovered EXE and recovered design evidence remain behavioral authorities: useful creator workflows and state contracts are restored while legacy branding, trade dress, licensing, account, telemetry, updater and heavyweight-runtime coupling remain outside the creator path.
 
 ## Authority of this parity slice
 
-- Recovered render evidence establishes that scene transitions are **additive**: transition duration is inserted between scene clips and never steals, overlaps or shortens the source scene duration.
-- The existing `TransitionSpec`, additive timeline math and FFmpeg transition-segment renderer remain the rendering authority.
-- v0.7 adds one explicit rebuild-owned timeline field, `transitions_json`, rather than guessing the unknown per-entry schema of legacy `clips`, `videoClips` or `audioClips`.
-- Existing databases are migrated idempotently: `ProjectStore.initialize()` adds `transitions_json TEXT NOT NULL DEFAULT '[]'` only when the column is absent.
-- Transition persistence round-trips independently from the four older timeline buckets and does not rewrite their contents.
-- Studio edits the selected scene → following scene transition with a supported effect and a duration within the recovered 0.1–10 second bounds.
-- When persisted `mediaOrder` is an exact scene permutation, it defines effective adjacency for the editor and final transition preflight.
-- Final project export decodes persisted entries into `TransitionSpec`, validates duplicate/adjacent pairs before any renderer runs, then passes them to the existing `MediaExporter`.
-- Supported persisted effects are limited to effects already backed by the transition engine: `fade`, `wipeleft`, `wiperight`, `slideleft`, `slideright`, `smoothleft`, and `smoothright`.
-- Malformed rows, unsupported effects and non-adjacent transitions fail closed rather than being approximated or silently discarded.
-- Existing v0.3 Canvas/Object, v0.4 AI Analyze/Voice, v0.5 Generated Images and v0.6 Advanced Voice storage/render/export authority remains unchanged.
+- Recovered render evidence states that voice/source-video audio are final composition layers; generated or explicitly attached per-scene narration must therefore reach authoritative final export rather than remain only in metadata/media storage.
+- Voice From Content already persists scene-local narration through `voice_path` and `voice_media_id`. v0.8 carries that persisted path through `SceneRenderPlan` into `ExportClip`.
+- Every persisted `voice_path` is preflighted across the whole project before any scene renderer starts. Missing/stale narration fails closed through `MissingSceneNarration`.
+- Image/static scene normalization replaces the synthetic silent track with scene narration when narration is present.
+- Rendered whiteboard/video scenes carry the same scene-local narration into final normalization.
+- When a normalized video already has audio, narration is mixed with that source audio rather than silently replacing it.
+- When a video has no source audio, narration becomes the scene audio without fabricating an additional mix layer.
+- Narration is resampled, padded when shorter and trimmed to the authoritative scene duration, so scene duration and additive transition duration remain independent.
+- Existing no-narration FFmpeg command behavior remains unchanged.
+- Existing v0.3 Canvas/Object, v0.4 AI Analyze/Voice, v0.5 Generated Images, v0.6 Advanced Voice and v0.7 Scene Transition authority remains unchanged.
 
 ## Evidence-limited boundaries
 
-- Non-empty legacy `clips`, `videoClips` and `audioClips` entry schemas remain fail-closed. Their table buckets are known, but current evidence does not establish a trustworthy per-entry contract.
-- Advanced legacy drawing behavior including arbitrary custom draw paths, non-default hand rendering, background removal and object effect/sound semantics remains evidence-limited.
-- Exact readable-label post-processing after generated images remains evidence-limited because its source/layout contract has not yet been recovered strongly enough.
-- These boundaries are explicit remaining forensic work, not silent feature substitutions.
+- Non-empty legacy `audioClips`, `videoClips` and `clips` entry schemas remain fail-closed; this slice does not reinterpret them as scene narration.
+- `batch_voice_segments` remains fail-closed because its persisted segment scheduling semantics are not sufficiently recovered for final composition.
+- Object SFX/custom sound semantics remain evidence-limited and are not inferred from scene narration.
+- Advanced legacy drawing behavior, exact readable-label post-processing and unrecovered multi-track trimming/cutting remain separate forensic work.
 
 ## Product constraints retained
 
