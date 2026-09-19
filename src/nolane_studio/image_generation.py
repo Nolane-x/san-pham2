@@ -85,6 +85,64 @@ class ImageGenerationService:
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
+    def _ensure_canvas_object(
+        self,
+        scene_id: str,
+        *,
+        media_id: str,
+        path: Path,
+        metadata: dict[str, Any],
+    ) -> str:
+        payload = {
+            "media_id": media_id,
+            "fit": "contain",
+            "generated": True,
+        }
+        objects = self.store.list_visual_objects(scene_id)
+        stored_id = str(metadata.get("image_object_id") or "").strip()
+        target = next((item for item in objects if item["id"] == stored_id), None)
+
+        generated_matches = [
+            item
+            for item in objects
+            if item.get("kind") == "image"
+            and isinstance(item.get("payload"), Mapping)
+            and item["payload"].get("generated") is True
+            and item["payload"].get("media_id") == media_id
+        ]
+        if target is None:
+            if len(generated_matches) > 1:
+                raise ValueError(
+                    f"scene {scene_id} has ambiguous generated image objects"
+                )
+            target = generated_matches[0] if generated_matches else None
+
+        if target is not None:
+            if target.get("kind") != "image":
+                raise ValueError(
+                    f"scene {scene_id} generated image object must be an image"
+                )
+            self.store.update_visual_object(
+                target["id"],
+                name="Generated scene visual",
+                source=str(path),
+                payload=payload,
+            )
+            return str(target["id"])
+
+        return self.store.add_visual_object(
+            scene_id,
+            "image",
+            name="Generated scene visual",
+            source=str(path),
+            x=0.0,
+            y=0.0,
+            width=1280.0,
+            height=720.0,
+            payload=payload,
+            z_index=0,
+        )
+
     def generate_scene(
         self,
         project_id: str,
@@ -130,6 +188,15 @@ class ImageGenerationService:
                     str(path),
                     media_id=media_id,
                 )
+            object_id = self._ensure_canvas_object(
+                scene_id,
+                media_id=media_id,
+                path=path,
+                metadata=metadata,
+            )
+            if metadata.get("image_object_id") != object_id:
+                metadata["image_object_id"] = object_id
+                self.store.update_scene(scene_id, metadata=metadata)
             return ImageArtifact(scene_id=scene_id, media_id=media_id, path=str(path))
 
         provider = self.providers.get(provider_name)
@@ -151,11 +218,18 @@ class ImageGenerationService:
                 media_id=media_id,
             )
 
+        object_id = self._ensure_canvas_object(
+            scene_id,
+            media_id=media_id,
+            path=path,
+            metadata=metadata,
+        )
         metadata.update(
             {
                 "visual_media_id": media_id,
                 "visual_path": str(path),
                 "image_path": str(path),
+                "image_object_id": object_id,
                 "image_provider": provider_name,
                 "image_size": request.size,
                 "image_cache_key": cache_key,
