@@ -338,3 +338,42 @@ def test_project_exporter_rejects_later_noncanonical_scene_text_before_any_rende
             assert render_calls == []
             assert media.calls == []
             assert not output.exists()
+
+def test_scene_reader_rejects_fractional_persisted_position(tmp_path):
+    store, _first, second = _store(tmp_path)
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_scenes SET position=? WHERE id=?",
+            (0.5, second["id"]),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^scene {second['id']} position must be a non-negative integer$",
+    ):
+        store.list_scenes("p1")
+
+
+def test_project_exporter_rejects_fractional_scene_position_before_any_render(tmp_path):
+    store, _first, second = _store(tmp_path)
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_scenes SET position=? WHERE id=?",
+            (0.5, second["id"]),
+        )
+
+    media = FakeMediaExporter()
+    render_calls = []
+    output = tmp_path / "never-fractional-scene-position.mp4"
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^scene {second['id']} position must be a non-negative integer$",
+    ):
+        try:
+            _exporter(store, media, render_calls).export("p1", output)
+        finally:
+            assert render_calls == []
+            assert media.calls == []
+            assert not output.exists()
+
