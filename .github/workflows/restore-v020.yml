@@ -1,0 +1,66 @@
+name: Restore v0.2.0 original release assets
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/restore-v020.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download original v0.2.0 workflow artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -L --fail \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/10336387157/zip" \
+            -o original-v020.zip
+          mkdir original-v020
+          unzip -q original-v020.zip -d original-v020
+
+      - name: Verify original artifact files
+        id: files
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe="$(find original-v020 -type f -name 'NolaneStudio.exe' -print -quit)"
+          portable="$(find original-v020 -type f -name 'NolaneStudio-Windows-x64-0.2.0.zip' -print -quit)"
+          setup="$(find original-v020 -type f -name 'NolaneStudio-Setup-0.2.0.exe' -print -quit)"
+          sums="$(find original-v020 -type f -name 'SHA256SUMS.txt' -print -quit)"
+          test -n "$exe"
+          test -n "$portable"
+          test -n "$setup"
+          test -n "$sums"
+          echo "exe=$exe" >> "$GITHUB_OUTPUT"
+          echo "portable=$portable" >> "$GITHUB_OUTPUT"
+          echo "setup=$setup" >> "$GITHUB_OUTPUT"
+          echo "sums=$sums" >> "$GITHUB_OUTPUT"
+
+      - name: Restore v0.2.0 assets byte-for-byte
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXE: ${{ steps.files.outputs.exe }}
+          PORTABLE: ${{ steps.files.outputs.portable }}
+          SETUP: ${{ steps.files.outputs.setup }}
+          SUMS: ${{ steps.files.outputs.sums }}
+        run: |
+          set -euo pipefail
+          gh release upload v0.2.0 "$EXE" "$PORTABLE" "$SETUP" "$SUMS" --clobber
+
+      - name: Verify release still targets the v0.2.0 source commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          target="$(gh release view v0.2.0 --json targetCommitish --jq .targetCommitish)"
+          test "$target" = "3175f6af8a421375f85efc634dcee3aa6f638c57"
