@@ -434,7 +434,6 @@ class ProjectSceneExporter:
                             trim_end=plan.total_duration,
                             clip_id=plan.scene_id,
                             narration_audio=narration_audio,
-                            narration_audio=narration_audio,
                         )
                     )
                     continue
@@ -458,6 +457,7 @@ class ProjectSceneExporter:
                             trim_start=0.0,
                             trim_end=plan.total_duration,
                             clip_id=plan.scene_id,
+                            narration_audio=narration_audio,
                         )
                     )
                     continue
