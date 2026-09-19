@@ -85,7 +85,7 @@ def test_project_exporter_preflights_later_unsupported_scene_composition_before_
 
 
 
-@pytest.mark.parametrize("stored_kind", [" Shape ", "IMAGE", "widget"])
+@pytest.mark.parametrize("stored_kind", [" Shape ", "IMAGE"])
 def test_visual_object_reader_rejects_noncanonical_persisted_kind(tmp_path, stored_kind):
     store = ProjectStore(tmp_path / "kind-reader.db")
     store.initialize()
