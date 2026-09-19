@@ -220,3 +220,29 @@ def test_visual_object_read_rejects_hidden_non_mapping_payload(tmp_path):
         match=rf"^scene {scene_id} hidden visual object {object_id} payload must be a mapping$",
     ):
         store.list_visual_objects(scene_id)
+
+
+
+def test_visual_object_read_rejects_hidden_unknown_kind(tmp_path):
+    store, scene_id = _store(tmp_path)
+    object_id = store.add_visual_object(
+        scene_id,
+        "shape",
+        name="Hidden kind integrity",
+        visible=False,
+    )
+
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_objects SET kind=? WHERE id=?",
+            ("widget", object_id),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            rf"^scene {scene_id} hidden visual object {object_id} kind must be one of: "
+            r"drawing, image, shape, text, video$"
+        ),
+    ):
+        store.list_visual_objects(scene_id)
