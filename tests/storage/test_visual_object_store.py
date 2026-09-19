@@ -298,3 +298,26 @@ def test_visual_object_read_rejects_hidden_non_finite_geometry(tmp_path, field):
     ):
         store.list_visual_objects(scene_id)
 
+@pytest.mark.parametrize("field", ["x", "y", "width", "height", "rotation"])
+def test_visual_object_add_rejects_non_finite_geometry(tmp_path, field):
+    store, scene_id = _store(tmp_path)
+
+    with pytest.raises(ValueError, match=rf"^{field} must be finite$"):
+        store.add_visual_object(
+            scene_id,
+            "shape",
+            **{field: float("inf")},
+        )
+
+
+@pytest.mark.parametrize("field", ["x", "y", "width", "height", "rotation"])
+def test_visual_object_update_rejects_non_finite_geometry(tmp_path, field):
+    store, scene_id = _store(tmp_path)
+    object_id = store.add_visual_object(scene_id, "shape", name="Finite writer")
+
+    with pytest.raises(ValueError, match=rf"^{field} must be finite$"):
+        store.update_visual_object(
+            object_id,
+            **{field: float("inf")},
+        )
+
