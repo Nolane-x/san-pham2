@@ -72,6 +72,7 @@ def test_preview_toolbar_action_uses_selected_scene_preview_and_opens_result(
     assert calls[0][0] == "p1"
     assert calls[0][1] == scene["id"]
     assert calls[0][2].name == f"p1-{scene['id']}.mp4"
-    assert opened == [str(calls[0][2].resolve())]
+    assert len(opened) == 1
+    assert Path(opened[0]).resolve() == calls[0][2].resolve()
     assert statuses[0].startswith("Preview")
     assert statuses[-1].startswith("Preview ready")
