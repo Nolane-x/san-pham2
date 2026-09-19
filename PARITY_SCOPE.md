@@ -1,24 +1,24 @@
-# Forensic parity scope — v0.9.0
+# Forensic parity scope — v0.10.0
 
 This branch continues the clean source rebuild of the user's legacy Windows creator application. The recovered EXE and recovered design evidence remain behavioral authorities: useful creator workflows and state contracts are restored while legacy branding, trade dress, licensing, account, telemetry, updater and heavyweight-runtime coupling remain outside the creator path.
 
 ## Authority of this parity slice
 
-- Recovered render evidence exposes per-object `pause / draw / push` timing and the existing render engine already represents it as `custom_object_timing_config` keyed by stable visual-object identity.
-- Studio now exposes that existing contract for the selected visible Canvas layer instead of offering only the coarse Fixed/Custom mode switch.
-- A missing custom entry follows the render engine's recovered fallback exactly: zero pause, zero push and an equal share of scene `reveal_duration` for draw time.
-- Applying timing replaces or appends only the selected object's canonical entry and preserves unrelated entries.
-- **Use default** removes only the selected object's override so the engine fallback becomes authoritative again.
-- Object timing controls follow layer selection and are disabled when Fixed mode is active, no scene is selected, or the selected object is not visible.
-- Scene duplication remaps custom timing object IDs to the copied scene's newly allocated object IDs, preserving the source scene's custom animation semantics after duplication.
-- The underlying sequential `ObjectTimingEntry` plan, whiteboard compositor and final project export behavior are unchanged.
-- Existing v0.3 Canvas/Object, v0.4 AI Analyze/Voice, v0.5 Generated Images, v0.6 Advanced Voice, v0.7 Scene Transition and v0.8 Scene Narration authority remains unchanged.
+- Recovered Visual Editor behavior supports clip transport/editing, but the legacy non-empty `clips`, `videoClips` and `audioClips` entry schemas are not recovered strongly enough to decode safely.
+- Nolane Studio therefore uses an explicit rebuild-owned `sceneEdits` list keyed by stable scene identity for the recovered scene-level subset: `trim_start`, `trim_end` and `speed`.
+- Scene edits are validated against authoritative scene render-plan durations and fail closed on unknown scene IDs, duplicate IDs, non-finite numbers, invalid trim windows, out-of-range trim end values or non-positive playback speeds.
+- The effective scene duration is `(trim_end - trim_start) / speed`; final export applies the same source window and speed to visual content, source-video audio and persisted scene narration.
+- Static/image scenes preserve their visual content while their edited duration and narration window follow the same scene-level contract.
+- Scene transitions retain the recovered additive semantics and are applied independently after scene edits rather than becoming overlapping crossfades.
+- Studio exposes Start / End / Speed controls for the selected scene and a reset action that removes only that scene's explicit edit.
+- Saving one scene edit preserves unrelated scene edits, transition state and legacy timeline payloads.
+- Existing v0.3 Canvas/Object, v0.4 AI Analyze/Voice, v0.5 Generated Images, v0.6 Advanced Voice, v0.7 Scene Transition, v0.8 Scene Narration and v0.9 Object Timing authority remains unchanged.
 
 ## Evidence-limited boundaries
 
-- Arbitrary custom draw paths and source-exact hand rendering are not inferred from the timing editor.
+- Arbitrary custom draw paths and source-exact hand rendering are not inferred from scene clip editing.
 - Background-removal behavior and object effect/sound routing remain evidence-limited.
-- Non-empty legacy `clips`, `videoClips`, `audioClips` and `batch_voice_segments` schemas remain fail-closed.
+- Arbitrary legacy multi-track clip splitting/cutting and non-empty `clips`, `videoClips`, `audioClips` and `batch_voice_segments` entry schemas remain fail-closed.
 - Automatic exact readable-label post-processing remains separate forensic work because its source/layout contract is not sufficiently recovered.
 
 ## Product constraints retained
