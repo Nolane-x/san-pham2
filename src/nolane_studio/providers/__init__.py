@@ -11,7 +11,9 @@ from .http import (
     GenericHttpTTSProvider,
     OpenAICompatibleAnalysisProvider,
     OpenAICompatibleImageProvider,
+    OpenAICompatibleSTTProvider,
     OpenAICompatibleTTSProvider,
+    OpenAICompatibleVisionProvider,
 )
 from .registry import ProviderDescriptor, ProviderRegistry
 
