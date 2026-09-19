@@ -397,7 +397,7 @@ class StudioPage(QWidget):
         self.object_timing_combo.addItem("Fixed", "fixed")
         self.object_timing_combo.addItem("Custom", "custom")
 
-        self.outro_enabled_check = QCheckBox("Enabled")
+        self.outro_enabled_check = QCheckBox("On")
         self.outro_enabled_check.setToolTip(
             "Recovered whiteboard outro: move the fully revealed scene left after the final hold"
         )
@@ -408,6 +408,13 @@ class StudioPage(QWidget):
         self.outro_duration_spin.setDecimals(2)
         self.outro_duration_spin.setSingleStep(0.05)
         self.outro_duration_spin.setSuffix(" s")
+        self.outro_controls = QWidget()
+        outro_controls_layout = QHBoxLayout(self.outro_controls)
+        outro_controls_layout.setContentsMargins(0, 0, 0, 0)
+        outro_controls_layout.setSpacing(5)
+        outro_controls_layout.addWidget(self.outro_enabled_check)
+        outro_controls_layout.addWidget(self.outro_direction_combo)
+        outro_controls_layout.addWidget(self.outro_duration_spin)
         self.render_style_combo.currentIndexChanged.connect(
             lambda _index: self._sync_outro_controls()
         )
@@ -423,9 +430,7 @@ class StudioPage(QWidget):
             ("Brush", self.brush_mode_combo),
             ("Hand", self.hand_style_combo),
             ("Timing", self.object_timing_combo),
-            ("Outro", self.outro_enabled_check),
-            ("Outro direction", self.outro_direction_combo),
-            ("Outro duration", self.outro_duration_spin),
+            ("Outro", self.outro_controls),
         )
         for row_index, (label, widget) in enumerate(controls):
             key = QLabel(label)
