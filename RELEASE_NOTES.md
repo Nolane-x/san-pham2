@@ -1,29 +1,27 @@
-# Nolane Studio v0.11.0
+# Nolane Studio v0.12.0
 
-Grounded Readable Label Overlay forensic-parity release.
+Selected Scene Preview forensic-parity release.
 
 Highlights:
 
-- restores the recovered rule that readable labels are added deterministically after image generation instead of asking the diffusion/image provider to render long text;
-- consumes the already-persisted AI Analyze contract: exact `label` text plus normalized grounded `box` coordinates;
-- materializes each recovered label as a persisted Canvas `text` object, so the normal scene compositor and authoritative final export render the same layer state the user sees;
-- materializes labels when AI Analyze completes and idempotently preserves them on generated-image cache hits for the same visual;
-- invalidates stale `ai_analysis` grounding and Nolane-owned label layers when a provider actually generates a new image, preventing old boxes from being projected onto a changed composition;
-- uses stable analysis slots so repeated synchronization is idempotent and existing service-owned object IDs are retained when possible;
-- removes only stale Nolane-owned readable-label slots and never hijacks or deletes user-created text layers;
-- validates the complete requested label set before the first label mutation and rejects malformed/non-finite/out-of-range/zero-area boxes fail-closed;
-- limits automatic label materialization to the recovered whiteboard path; other visual styles remain untouched;
-- preserves v0.10 scene clip trim/speed, v0.9 object timing, v0.8 scene narration export, v0.7 transitions, v0.6 advanced voice, v0.5 generated images and v0.4 AI Analyze behavior.
+- restores the recovered Studio Preview control as a real selected-scene render instead of a placeholder;
+- routes preview through the same authoritative persisted Canvas/video/whiteboard scene pipeline used by final rendering;
+- includes persisted per-scene narration in preview output;
+- honors the rebuild-owned `sceneEdits` trim-start, trim-end and playback-speed contract for the selected scene;
+- intentionally excludes project ordering and additive scene transitions because Preview is a local scene inspection action rather than a project export;
+- renders and preflights only the selected scene, so an unrelated unsupported scene cannot block local preview;
+- opens the rendered preview from the Studio toolbar after the background render task completes;
+- rejects missing/unknown selected scenes and invalid persisted edit state fail-closed;
+- preserves v0.11 grounded readable labels, v0.10 scene clip trim/speed, v0.9 object timing, v0.8 narration export, v0.7 transitions, v0.6 advanced voice, v0.5 generated images and v0.4 AI Analyze behavior.
 
 Forensic boundary:
 
-- grounded box coordinates are the recovered placement authority for this slice;
-- the rebuild uses a neutral deterministic text style and does **not** claim source-exact legacy font, decoration, callout shape or typography;
-- arbitrary custom draw paths, non-default hand rendering, background removal and object-FX/SFX semantics remain evidence-limited;
-- arbitrary legacy multi-track clip splitting/cutting and the non-empty `clips`, `videoClips`, `audioClips` and `batch_voice_segments` entry schemas remain fail-closed rather than guessed.
+- selected-scene preview does not decode the still-unrecovered non-empty legacy `clips`, `videoClips` or `audioClips` entry schemas;
+- project transition/order behavior remains final-export-only by design for this recovered control;
+- arbitrary custom draw paths, source-exact non-default hand/background-removal behavior, object-SFX semantics and source-exact legacy label typography/decoration remain evidence-limited.
 
 Release integrity:
 
-- package metadata and runtime `__version__` are both 0.11.0 in this branch;
-- the label implementation is covered by core idempotence/preservation/fail-closed tests plus an offscreen Studio AI Analyze lifecycle test;
+- package metadata and runtime `__version__` are both 0.12.0;
+- preview behavior is covered by selected-only render, narration binding, trim/speed, transition exclusion, unknown-scene fail-fast and toolbar wiring tests;
 - merge is allowed only after Linux fast tests and the complete Windows test/NUI/portable/installer/checksum packaging workflow pass on the exact final head.
