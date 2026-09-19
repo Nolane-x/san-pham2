@@ -7,6 +7,7 @@ from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
 from ..ai.object_voice import ObjectVoiceAnalyzer, merge_analysis_metadata
+from ..images import GeneratedImageService
 from ..providers.registry import ProviderRegistry
 from ..render.project_export import ProjectSceneExporter
 from ..storage.store import ProjectStore
@@ -73,6 +74,17 @@ class StudioPage(_BaseStudioPage):
         self.providers = providers or ProviderRegistry()
         self._task_workers: list[TaskWorker] = []
 
+        self.generate_image_button = QPushButton("Generate image")
+        self.generate_image_button.setToolTip(
+            "Generate the selected scene image from its hardened visual prompt"
+        )
+        self.generate_image_button.clicked.connect(self._generate_selected_image)
+        self.generate_all_images_button = QPushButton("Generate all images")
+        self.generate_all_images_button.setToolTip(
+            "Generate durable images for every scene"
+        )
+        self.generate_all_images_button.clicked.connect(self._generate_all_images)
+
         self.ai_analyze_button = QPushButton("AI Analyze")
         self.ai_analyze_button.setToolTip("Analyze the selected scene image + narration")
         self.ai_analyze_button.clicked.connect(self._analyze_selected_scene)
@@ -82,8 +94,10 @@ class StudioPage(_BaseStudioPage):
         )
         self.analyze_all_button.clicked.connect(self._analyze_all_scenes)
         insert_at = max(0, self.toolbar_layout.count() - 2)
-        self.toolbar_layout.insertWidget(insert_at, self.ai_analyze_button)
-        self.toolbar_layout.insertWidget(insert_at + 1, self.analyze_all_button)
+        self.toolbar_layout.insertWidget(insert_at, self.generate_image_button)
+        self.toolbar_layout.insertWidget(insert_at + 1, self.generate_all_images_button)
+        self.toolbar_layout.insertWidget(insert_at + 2, self.ai_analyze_button)
+        self.toolbar_layout.insertWidget(insert_at + 3, self.analyze_all_button)
 
         self.attach_media_button = QPushButton("Attach")
         self.attach_media_button.setObjectName("ghost")
@@ -146,6 +160,76 @@ class StudioPage(_BaseStudioPage):
                 f"No {capability.upper()} provider configured. Open Providers first."
             )
         return matches[0].name
+
+    def _image_service(self) -> GeneratedImageService:
+        return GeneratedImageService(
+            self.store,
+            self.providers,
+            Path(self.store.db_path).parent / "generated",
+        )
+
+    def _scene_style(self, scene_id: str) -> str:
+        settings = self.store.get_scene_render_settings(scene_id)
+        return str(settings.get("style") or "whiteboard")
+
+    def _generate_selected_image(self) -> None:
+        if not self.project_id:
+            self.status_message.emit("Open a project before generating images")
+            return
+        scene_id = self._selected_scene_id()
+        if not scene_id:
+            self.status_message.emit("Select a scene first")
+            return
+        try:
+            provider_name = self._provider_name("image")
+        except RuntimeError as exc:
+            self.status_message.emit(str(exc))
+            return
+        project_id = self.project_id
+        style = self._scene_style(scene_id)
+        service = self._image_service()
+        self._start_task(
+            lambda: service.generate_scene(
+                project_id,
+                scene_id,
+                provider_name=provider_name,
+                style=style,
+            ),
+            started="Generating selected scene image…",
+            success=lambda artifact: f"Image ready · {Path(artifact.path).name}",
+        )
+
+    def _generate_all_images(self) -> None:
+        if not self.project_id:
+            self.status_message.emit("Open a project before generating images")
+            return
+        try:
+            provider_name = self._provider_name("image")
+        except RuntimeError as exc:
+            self.status_message.emit(str(exc))
+            return
+        project_id = self.project_id
+        scene_ids = [scene["id"] for scene in self.store.list_scenes(project_id)]
+        service = self._image_service()
+
+        def task() -> list:
+            return [
+                service.generate_scene(
+                    project_id,
+                    scene_id,
+                    provider_name=provider_name,
+                    style=self._scene_style(scene_id),
+                )
+                for scene_id in scene_ids
+            ]
+
+        self._start_task(
+            task,
+            started="Generating project images…",
+            success=lambda artifacts: (
+                f"Generate all images complete · {len(artifacts)} scene(s)"
+            ),
+        )
 
     def _refresh_canvas_objects(self, *, selected_object_id: str | None = None) -> None:
         scene_id = self._selected_scene_id()
