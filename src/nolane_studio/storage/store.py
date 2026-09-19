@@ -14,6 +14,14 @@ from .schema import SCHEMA_SQL
 
 class ProjectStore:
     _VISUAL_OBJECT_KINDS = {"image", "video", "text", "shape", "drawing"}
+    _PROJECT_WIDE_RENDER_KEYS = (
+        "style",
+        "visual_mode",
+        "brush_mode",
+        "hand_style",
+        "remove_background_enabled",
+        "auto_object_fx_enabled",
+    )
 
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
@@ -366,6 +374,85 @@ class ProjectStore:
                 (row["project_id"],),
             )
         return normalized
+
+    def apply_scene_render_settings_to_project(self, source_scene_id: str) -> int:
+        """Apply portable scene-wide drawing controls to every scene atomically.
+
+        Recovered project-wide "apply settings" behavior must not clone
+        object-addressed state across scenes. Only scene-wide controls and the
+        reveal/hold durations are propagated. Each target keeps its own custom
+        object timing/push/effect/sound/draw-path/camera/image-motion state and
+        unknown extras.
+        """
+        with self._connect() as conn:
+            source = conn.execute(
+                "SELECT * FROM visual_editor_scenes WHERE id=?",
+                (source_scene_id,),
+            ).fetchone()
+            if source is None:
+                raise KeyError(source_scene_id)
+
+            project_id = str(source["project_id"])
+            source_metadata = self._decode_stored_scene_metadata(
+                source["metadata_json"],
+                scene_id=source_scene_id,
+            )
+            source_raw = self._stored_render_config(source_metadata)
+            source_raw["reveal_duration"] = source["reveal_duration"]
+            source_raw["hold_duration"] = source["hold_duration"]
+            source_settings = normalize_render_config(source_raw)
+            portable = {
+                key: source_settings[key]
+                for key in self._PROJECT_WIDE_RENDER_KEYS
+            }
+
+            rows = conn.execute(
+                """SELECT * FROM visual_editor_scenes
+                   WHERE project_id=? ORDER BY position, rowid""",
+                (project_id,),
+            ).fetchall()
+            for row in rows:
+                target_id = str(row["id"])
+                metadata = self._decode_stored_scene_metadata(
+                    row["metadata_json"],
+                    scene_id=target_id,
+                )
+                target_raw = self._stored_render_config(metadata)
+                target_raw.update(portable)
+                target_raw["reveal_duration"] = source_settings["reveal_duration"]
+                target_raw["hold_duration"] = source_settings["hold_duration"]
+                normalized = normalize_render_config(target_raw)
+
+                canonical = dict(normalized)
+                extras = dict(canonical.pop("extras", {}) or {})
+                canonical.update(extras)
+                metadata["render_config"] = {
+                    key: value
+                    for key, value in canonical.items()
+                    if key not in {"reveal_duration", "hold_duration"}
+                }
+                conn.execute(
+                    """UPDATE visual_editor_scenes
+                       SET reveal_duration=?, hold_duration=?, metadata_json=?,
+                           updated_at=CURRENT_TIMESTAMP
+                       WHERE id=?""",
+                    (
+                        normalized["reveal_duration"],
+                        normalized["hold_duration"],
+                        json.dumps(
+                            metadata,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                        target_id,
+                    ),
+                )
+
+            conn.execute(
+                "UPDATE user_project_library SET updated_at=CURRENT_TIMESTAMP WHERE project_id=?",
+                (project_id,),
+            )
+            return len(rows)
 
     def reset_scene_render_settings(self, scene_id: str) -> dict[str, Any]:
         """Restore canonical render defaults without deleting scene content.
