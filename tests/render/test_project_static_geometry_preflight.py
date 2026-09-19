@@ -122,13 +122,17 @@ def test_project_exporter_preflights_later_nonfinite_static_geometry_before_any_
         settings={"style": "static"},
     )
 
-    store.add_visual_object(
+    second_object_id = store.add_visual_object(
         second["id"],
         "shape",
         name="Second shape",
-        width=float("inf"),
         payload={"fill": "#00FF00"},
     )
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_objects SET width=? WHERE id=?",
+            (float("inf"), second_object_id),
+        )
     store.update_scene_render_settings(
         second["id"],
         reveal_duration=0.0,
