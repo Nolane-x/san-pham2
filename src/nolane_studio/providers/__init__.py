@@ -1,4 +1,11 @@
-from .base import AnalysisProvider, ImageProvider, ProviderCapabilities, TTSProvider
+from .base import (
+    AnalysisProvider,
+    ImageProvider,
+    ProviderCapabilities,
+    STTProvider,
+    TTSProvider,
+    VisionProvider,
+)
 from .command import CommandTTSProvider
 from .http import (
     GenericHttpTTSProvider,
@@ -9,7 +16,17 @@ from .http import (
 from .registry import ProviderDescriptor, ProviderRegistry
 
 __all__ = [
-    "AnalysisProvider", "ImageProvider", "TTSProvider", "ProviderCapabilities", "ProviderDescriptor", "ProviderRegistry",
-    "CommandTTSProvider", "GenericHttpTTSProvider", "OpenAICompatibleAnalysisProvider",
-    "OpenAICompatibleImageProvider", "OpenAICompatibleTTSProvider",
+    "AnalysisProvider",
+    "ImageProvider",
+    "TTSProvider",
+    "STTProvider",
+    "VisionProvider",
+    "ProviderCapabilities",
+    "ProviderDescriptor",
+    "ProviderRegistry",
+    "CommandTTSProvider",
+    "GenericHttpTTSProvider",
+    "OpenAICompatibleAnalysisProvider",
+    "OpenAICompatibleImageProvider",
+    "OpenAICompatibleTTSProvider",
 ]
