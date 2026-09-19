@@ -18,6 +18,8 @@ class ProviderSettings:
     stt_model: str = ""
     tts_base_url: str = ""
     tts_model: str = ""
+    tts_advanced_endpoint: str = ""
+    tts_voices_endpoint: str = ""
 
 
 def default_data_dir() -> Path:

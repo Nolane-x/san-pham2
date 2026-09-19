@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from .config import ProviderSettings
 
 from .providers import (
+    GenericHttpTTSProvider,
     OpenAICompatibleAnalysisProvider,
     OpenAICompatibleImageProvider,
     OpenAICompatibleSTTProvider,
@@ -77,7 +78,31 @@ def build_services(settings: ProviderSettings | None = None) -> AppServices:
 
     tts_base = os.getenv("NOLANE_STUDIO_TTS_BASE_URL") or settings.tts_base_url
     tts_model = os.getenv("NOLANE_STUDIO_TTS_MODEL") or settings.tts_model
-    if tts_base and tts_model:
+    tts_advanced_endpoint = (
+        os.getenv("NOLANE_STUDIO_TTS_ADVANCED_ENDPOINT")
+        or settings.tts_advanced_endpoint
+    )
+    tts_voices_endpoint = (
+        os.getenv("NOLANE_STUDIO_TTS_VOICES_ENDPOINT")
+        or settings.tts_voices_endpoint
+    )
+    if tts_advanced_endpoint:
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        registry.register(
+            "tts-api",
+            ProviderCapabilities(
+                tts=True,
+                clone=True,
+                design=True,
+                list_voices=bool(tts_voices_endpoint),
+            ),
+            lambda: GenericHttpTTSProvider(
+                tts_advanced_endpoint,
+                voices_endpoint=tts_voices_endpoint or None,
+                headers=headers,
+            ),
+        )
+    elif tts_base and tts_model:
         registry.register(
             "tts-api",
             ProviderCapabilities(tts=True),

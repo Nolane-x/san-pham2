@@ -1,29 +1,31 @@
-# Forensic parity scope — v0.5.0
+# Forensic parity scope — v0.6.0
 
-This branch continues the clean source rebuild of the user's legacy Windows creator application. The recovered EXE remains a behavioral oracle: useful workflows and state contracts are restored, while legacy branding, trade dress, licensing, account, telemetry, updater and heavyweight-runtime coupling stay outside the creator path.
+This branch continues the clean source rebuild of the user's legacy Windows creator application. The recovered EXE and recovered design evidence remain behavioral authorities: useful creator workflows and state contracts are restored while legacy branding, trade dress, licensing, account, telemetry, updater and heavyweight-runtime coupling remain outside the creator path.
 
 ## Authority of this parity slice
 
-- The recovered pipeline explicitly contains **optional image generation** between validated scene prompts and the visual editor.
-- Image generation is a lazy provider capability. Opening Nolane Studio does not construct or download a local image model.
-- A generated scene visual is keyed deterministically by hardened prompt, provider and requested size.
-- Each scene owns a stable generated media slot `image-{scene_id}`; cache hits reuse that asset and prompt/provider/size changes invalidate it.
-- The generated visual is also represented by one persisted Canvas image object at the back of the scene stack, making the Canvas/Object Engine and render plan authoritative rather than keeping generated files in side metadata only.
-- Generated-object ownership is explicit. Stale metadata must never hijack or overwrite a manual image layer.
-- Studio exposes **Generate image** and **Generate All Images**; Providers exposes Image endpoint/model configuration and environment overrides.
-- Generated images populate the scene image metadata already consumed by v0.4 AI Analyze.
-- Existing v0.3 Canvas/Object and v0.4 AI Analyze/Voice storage/render/export contracts remain authoritative.
+- Recovered evidence states that the old voice subsystem supported ordinary synthesis, saved/provider voices, reference-based cloning and designed voices.
+- The rebuild represents those behaviors as provider capabilities: `tts`, `clone`, `design` and `list_voices`; Studio never branches on provider names.
+- Voice From Content accepts language, voice, speed, optional reference audio/text and optional design instructions for both selected-scene and project-wide generation.
+- Reference audio is content-hashed. Cache identity includes narration text, provider, language, voice, speed, reference-audio hash, reference text and design instructions, so unchanged work is reused while meaningful input changes invalidate it.
+- Capability preflight happens before advanced inputs reach a provider. Clone/design requests fail closed when the selected provider does not advertise the corresponding capability.
+- Studio reads lazy provider descriptors to show or hide reference-audio, reference-text, design and catalog controls without instantiating the provider merely by opening the editor.
+- Voice catalog loading is an explicit user action and is routed only when `list_voices` is advertised.
+- The normal OpenAI-compatible TTS base/model path remains synthesize-only.
+- An explicitly configured Advanced TTS endpoint uses the existing generic JSON-in/binary-out adapter for synthesize/clone/design fields. An optional, separately configured voice-catalog endpoint enables `list_voices`.
+- Advanced TTS and catalog endpoints may be supplied from local settings or `NOLANE_STUDIO_TTS_ADVANCED_ENDPOINT` / `NOLANE_STUDIO_TTS_VOICES_ENDPOINT` environment overrides.
+- Existing v0.3 Canvas/Object, v0.4 AI Analyze/Voice and v0.5 generated-image storage/render/export authority remains unchanged.
 
 ## Evidence-limited boundaries
 
-- Recovered documentation states that exact readable labels are overlaid deterministically after image generation, but the source and layout schema for those labels is not sufficiently recovered in the current evidence. This branch does not invent one.
-- Non-empty legacy multi-track `clips`, `videoClips` and `audioClips` entries remain fail-closed because their per-entry schema is not yet sufficiently recovered.
-- These boundaries are explicit remaining forensic work, not silent feature substitutions.
+- The recovered evidence defines voice capabilities but does not establish one universal vendor wire protocol for cloning/design. Nolane Studio therefore does not invent an “OpenAI-compatible clone API”; advanced HTTP transport is an explicit generic wrapper contract.
+- Provider-internal saved-voice storage remains provider-owned. Nolane Studio consumes optional discovery through `list_voices` rather than recreating the removed heavyweight OmniVoice runtime.
+- Exact readable-label post-processing and non-empty legacy multi-track `clips` / `videoClips` / `audioClips` entry schemas remain explicit forensic work because their source/layout or per-entry contracts are not sufficiently recovered.
 
 ## Product constraints retained
 
 - Windows desktop remains the primary target, including 8 GB RAM machines.
 - No FREE/PRO feature naming, paywall, license verification, mandatory login, or mandatory account gate.
 - No mandatory Ollama, OmniVoice, ComfyUI, local LLM, local speech model, local image model, or model-weight download merely to open/use the editor.
-- No provider-specific SDK is required for the OpenAI-compatible HTTP paths in this slice.
+- API keys are not persisted in `settings.json`.
 - Subsequent parity work must be supported by recovered evidence or be labeled explicitly as new product design.
