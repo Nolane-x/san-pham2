@@ -61,6 +61,22 @@ def test_generated_image_service_persists_stable_scene_media_and_reuses_cache(tm
     assert metadata["image_provider"] == "image-test"
     assert metadata["image_size"] == "1024x1024"
     assert metadata["image_cache_key"]
+    assert metadata["image_object_id"]
+
+    objects = store.list_visual_objects(scene_id)
+    assert len(objects) == 1
+    assert objects[0]["id"] == metadata["image_object_id"]
+    assert objects[0]["kind"] == "image"
+    assert objects[0]["source"] == first.path
+    assert objects[0]["payload"] == {
+        "media_id": f"image-{scene_id}",
+        "fit": "contain",
+        "generated": True,
+    }
+
+    service.generate_scene("p1", scene_id, provider_name="image-test")
+    objects_after_cache_hit = store.list_visual_objects(scene_id)
+    assert [item["id"] for item in objects_after_cache_hit] == [metadata["image_object_id"]]
 
 
 def test_generated_image_cache_invalidates_when_scene_prompt_changes(tmp_path):
