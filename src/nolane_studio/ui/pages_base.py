@@ -413,6 +413,18 @@ class StudioPage(QWidget):
             settings_grid.addWidget(widget, row_index, 1)
         inspector_layout.addLayout(settings_grid)
 
+        self.apply_render_settings_all_button = QPushButton(
+            "Apply drawing settings to all scenes"
+        )
+        self.apply_render_settings_all_button.setObjectName("ghost")
+        self.apply_render_settings_all_button.setToolTip(
+            "Apply scene-wide drawing controls to every scene while preserving object-specific timing and effects"
+        )
+        self.apply_render_settings_all_button.clicked.connect(
+            self._apply_render_settings_to_all_scenes
+        )
+        inspector_layout.addWidget(self.apply_render_settings_all_button)
+
         self.object_timing_surface = Surface()
         timing_grid = QGridLayout(self.object_timing_surface)
         timing_grid.setContentsMargins(12, 10, 12, 10)
@@ -516,6 +528,7 @@ class StudioPage(QWidget):
             self.remove_background_check,
             self.auto_object_fx_check,
             self.object_timing_combo,
+            self.apply_render_settings_all_button,
             self.reset_scene_button,
         ):
             widget.setEnabled(enabled)
@@ -934,6 +947,39 @@ class StudioPage(QWidget):
         self._refresh_canvas_objects(selected_object_id=self._selected_object_id())
         self.status_message.emit("Scene render settings reset to defaults")
 
+    def _current_render_control_settings(self) -> dict:
+        return {
+            "style": self.render_style_combo.currentData(),
+            "visual_mode": self.visual_mode_combo.currentData(),
+            "brush_mode": self.brush_mode_combo.currentData(),
+            "hand_style": self.hand_style_combo.currentData(),
+            "remove_background_enabled": self.remove_background_check.isChecked(),
+            "auto_object_fx_enabled": self.auto_object_fx_check.isChecked(),
+            "object_timing_mode": self.object_timing_combo.currentData(),
+        }
+
+    def _apply_render_settings_to_all_scenes(self) -> None:
+        scene_id = self._selected_scene_id()
+        if not self.project_id or not scene_id:
+            self.status_message.emit(
+                "Select a scene before applying drawing settings to all scenes"
+            )
+            return
+
+        # Persist the currently visible controls first so Apply-to-all operates
+        # on what the user sees, not on a stale saved snapshot.
+        self.store.update_scene_render_settings(
+            scene_id,
+            reveal_duration=self.reveal_spin.value(),
+            hold_duration=self.hold_spin.value(),
+            settings=self._current_render_control_settings(),
+        )
+        updated = self.store.apply_scene_render_settings_to_project(scene_id)
+        self._load_render_controls(scene_id)
+        self.status_message.emit(
+            f"Drawing settings applied to {updated} scene(s) · object-specific state preserved"
+        )
+
     def _save_selected_scene(self) -> None:
         scene_id = self._selected_scene_id()
         if not scene_id:
@@ -947,15 +993,7 @@ class StudioPage(QWidget):
             scene_id,
             reveal_duration=self.reveal_spin.value(),
             hold_duration=self.hold_spin.value(),
-            settings={
-                "style": self.render_style_combo.currentData(),
-                "visual_mode": self.visual_mode_combo.currentData(),
-                "brush_mode": self.brush_mode_combo.currentData(),
-                "hand_style": self.hand_style_combo.currentData(),
-                "remove_background_enabled": self.remove_background_check.isChecked(),
-                "auto_object_fx_enabled": self.auto_object_fx_check.isChecked(),
-                "object_timing_mode": self.object_timing_combo.currentData(),
-            },
+            settings=self._current_render_control_settings(),
         )
         current_row = self.scenes.currentRow()
         self._refresh_scenes(selected_id=scene_id, fallback_row=current_row)
