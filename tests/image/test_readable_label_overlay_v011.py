@@ -138,6 +138,13 @@ def test_grounded_readable_labels_fail_closed_before_mutating_on_invalid_box(tmp
     assert store.list_visual_objects(scene_id) == before
 
 
+def test_readable_label_validator_rejects_non_mapping_metadata():
+    from nolane_studio.readable_labels import validate_readable_label_metadata
+
+    with pytest.raises(ValueError, match="metadata must be a mapping"):
+        validate_readable_label_metadata([])
+
+
 class FakeImageProvider:
     def __init__(self) -> None:
         self.requests: list[ImageRequest] = []
