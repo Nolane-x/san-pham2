@@ -406,6 +406,16 @@ class ProjectStore:
             )
             self._sync_scene_count(conn, project_id)
 
+    @staticmethod
+    def _finite_visual_number(value: Any, *, field: str) -> float:
+        try:
+            result = float(value)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(f"{field} must be finite") from None
+        if not math.isfinite(result):
+            raise ValueError(f"{field} must be finite")
+        return result
+
     @classmethod
     def _normalize_visual_object_values(
         cls,
@@ -419,9 +429,9 @@ class ProjectStore:
         if normalized_kind not in cls._VISUAL_OBJECT_KINDS:
             allowed = ", ".join(sorted(cls._VISUAL_OBJECT_KINDS))
             raise ValueError(f"kind must be one of: {allowed}")
-        width_value = float(width)
-        height_value = float(height)
-        opacity_value = float(opacity)
+        width_value = cls._finite_visual_number(width, field="width")
+        height_value = cls._finite_visual_number(height, field="height")
+        opacity_value = cls._finite_visual_number(opacity, field="opacity")
         if width_value <= 0:
             raise ValueError("width must be > 0")
         if height_value <= 0:
@@ -485,6 +495,9 @@ class ProjectStore:
             height=height,
             opacity=opacity,
         )
+        x_value = self._finite_visual_number(x, field="x")
+        y_value = self._finite_visual_number(y, field="y")
+        rotation_value = self._finite_visual_number(rotation, field="rotation")
         with self._connect() as conn:
             if conn.execute("SELECT 1 FROM visual_editor_scenes WHERE id=?", (scene_id,)).fetchone() is None:
                 raise KeyError(scene_id)
@@ -517,11 +530,11 @@ class ProjectStore:
                     normalized_kind,
                     str(name or ""),
                     str(source or ""),
-                    float(x),
-                    float(y),
+                    x_value,
+                    y_value,
                     width_value,
                     height_value,
-                    float(rotation),
+                    rotation_value,
                     opacity_value,
                     1 if visible else 0,
                     1 if locked else 0,
@@ -643,9 +656,14 @@ class ProjectStore:
             for column, value in (
                 ("name", None if name is None else str(name)),
                 ("source", None if source is None else str(source)),
-                ("x", None if x is None else float(x)),
-                ("y", None if y is None else float(y)),
-                ("rotation", None if rotation is None else float(rotation)),
+                ("x", None if x is None else self._finite_visual_number(x, field="x")),
+                ("y", None if y is None else self._finite_visual_number(y, field="y")),
+                (
+                    "rotation",
+                    None
+                    if rotation is None
+                    else self._finite_visual_number(rotation, field="rotation"),
+                ),
             ):
                 if value is not None:
                     updates.append(f"{column}=?")
