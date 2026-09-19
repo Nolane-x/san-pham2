@@ -142,7 +142,7 @@ def sync_readable_label_objects(
     scene_id: str,
     metadata: Mapping[str, Any] | None,
 ) -> tuple[str, ...]:
-    """Materialize recovered readable labels as deterministic editable Canvas text layers.
+    """Materialize recovered readable labels as deterministic persisted Canvas text layers.
 
     The recovered behavior requires exact label text to be added after image
     generation rather than delegated to the image model. Grounded AI Analyze
