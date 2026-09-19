@@ -10,6 +10,7 @@ Highlights:
 - hidden or stale object timing is preserved but cannot spuriously enable scene push, matching render-plan visibility semantics;
 - existing automatic push mode and persisted direction are preserved rather than silently rewritten;
 - malformed or ambiguous legacy timing makes activation derivation return no decision, so the UI preserves the existing activation flag instead of inventing a repair;
+- duplicate timing entries for the same currently visible object are treated as ambiguous exactly like the renderer does, preventing UI-side activation drift before export preflight;
 - UI-saved positive Push is covered through `ProjectSceneExporter`, proving it passes the existing push preflight and reaches the authoritative whiteboard render path;
 - preserves v0.16 recovered whiteboard outro controls and every earlier verified parity wave.
 
