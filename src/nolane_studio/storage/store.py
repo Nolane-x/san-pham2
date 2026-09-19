@@ -533,7 +533,13 @@ class ProjectStore:
                 object_id=object_id,
                 field="locked",
             )
-            item["payload"] = json.loads(item.pop("payload_json") or "{}")
+            payload = json.loads(item.pop("payload_json") or "{}")
+            if not item["visible"] and not isinstance(payload, Mapping):
+                raise ValueError(
+                    f"scene {scene_id} hidden visual object {object_id} "
+                    "payload must be a mapping"
+                )
+            item["payload"] = payload
             result.append(item)
         return result
 
