@@ -1,8 +1,8 @@
-# Forensic parity scope — v0.15.0
+# Forensic parity scope — v0.16.0
 
 This branch continues the clean source rebuild of the user's legacy Windows creator application. Recovered executable behavior and recovered project evidence remain behavioral authorities. Creator workflows are restored only where the state contract is sufficiently grounded; branding, trade dress, licensing, account, telemetry, updater and heavyweight-runtime coupling remain outside the creator path.
 
-## Authority recovered through v0.15
+## Authority recovered through v0.16
 
 - v0.3 established durable Canvas/object state used by the visual editor and authoritative render pipeline.
 - v0.4 restored API-first AI Analyze plus per-scene Voice From Content contracts.
@@ -16,11 +16,14 @@ This branch continues the clean source rebuild of the user's legacy Windows crea
 - v0.12 restores the Studio Preview control as a real selected-scene render through the authoritative Canvas/video/whiteboard pipeline, with narration and `sceneEdits`, but without project transitions/order.
 - v0.13 restores bounded lossless reset of scene render/motion state while preserving scene content, media ownership, narration and analysis metadata.
 - v0.14 restores project-wide application of scene-wide drawing controls without copying scene-local object-addressed state between scenes.
-- v0.15 keeps supported timeline state coherent across scene Add/Duplicate/Move/Delete. Scene lifecycle changes rewrite `mediaOrder` to authoritative current scene order, retain only still-adjacent transitions, prune deleted-scene edits, clone a duplicated scene's `sceneEdits` entry, preserve object-ID remapping, rebuild valid order after last-scene replacement, and fail closed before mutation when opaque legacy track buckets are non-empty or persisted transition references are already invalid.
+- v0.15 keeps supported timeline state coherent across scene Add/Duplicate/Move/Delete, including exact `mediaOrder`, transition adjacency, scene-edit pruning/cloning and fail-closed opaque legacy tracks.
+- v0.16 exposes the already-implemented recovered whiteboard outro control in Studio. The authoritative whiteboard pipeline treats the outro as an additive phase after the final hold, includes its duration in scene duration, and renders the strongly evidenced `left` direction as a full-scene FFmpeg exit. Studio persists enable/duration/verified direction, preserves unsupported legacy direction values until explicit repair, prevents new non-whiteboard outro state, restores defaults through Reset scene, and keeps outro scene-local during project-wide drawing-settings propagation.
 
 ## Evidence-limited boundaries
 
-- v0.15 does not infer or decode non-empty legacy `clips`, `videoClips`, `audioClips` or `batch_voice_segments` entry schemas.
+- Whiteboard outro direction `left` is recovered and rendered; other direction values are not approximated and remain unsupported/fail-closed until stronger evidence exists.
+- Whiteboard outro on source-video composition and outro behavior for non-whiteboard styles remain outside the faithful renderer.
+- v0.16 does not infer or decode non-empty legacy `clips`, `videoClips`, `audioClips` or `batch_voice_segments` entry schemas.
 - Arbitrary legacy multi-track splitting/cutting remains unrecovered; generic rebuild timeline helpers are not treated as proof of the original persisted schema.
 - Arbitrary custom draw-path semantics and source-exact non-default hand rendering remain separate parity work.
 - Background-removal internals and object effect/sound routing remain evidence-limited even though recovered enable/disable controls can be persisted.
