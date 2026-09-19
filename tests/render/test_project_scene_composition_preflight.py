@@ -82,3 +82,107 @@ def test_project_exporter_preflights_later_unsupported_scene_composition_before_
 
     assert render_calls == []
     assert media.calls == []
+
+
+
+@pytest.mark.parametrize("stored_kind", [" Shape ", "IMAGE", "widget"])
+def test_visual_object_reader_rejects_noncanonical_persisted_kind(tmp_path, stored_kind):
+    store = ProjectStore(tmp_path / "kind-reader.db")
+    store.initialize()
+    store.create_project("p1", "Kind reader")
+    store.replace_scenes("p1", [Scene(0, "Only")])
+    scene = store.list_scenes("p1")[0]
+    object_id = store.add_visual_object(scene["id"], "shape", name="Kind integrity")
+
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_objects SET kind=? WHERE id=?",
+            (stored_kind, object_id),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            rf"^visual object {object_id} kind must be stored canonically as one of: "
+            r"drawing, image, shape, text, video$"
+        ),
+    ):
+        store.list_visual_objects(scene["id"])
+
+
+def test_project_exporter_rejects_later_noncanonical_object_kind_before_any_render(tmp_path):
+    store = ProjectStore(tmp_path / "kind-preflight.db")
+    store.initialize()
+    store.create_project("p1", "Canonical kind preflight")
+    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Second")])
+    first, second = store.list_scenes("p1")
+
+    store.add_visual_object(
+        first["id"],
+        "shape",
+        name="First shape",
+        payload={"fill": "#FF0000"},
+    )
+    second_object_id = store.add_visual_object(
+        second["id"],
+        "shape",
+        name="Corrupt kind",
+        payload={"fill": "#00AAFF"},
+    )
+    for scene in (first, second):
+        store.update_scene_render_settings(
+            scene["id"],
+            reveal_duration=0.0,
+            hold_duration=1.0,
+            settings={"style": "whiteboard"},
+        )
+
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_objects SET kind=? WHERE id=?",
+            (" Shape ", second_object_id),
+        )
+
+    media = FakeMediaExporter()
+    render_calls: list[tuple[str, str]] = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def whiteboard(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("whiteboard", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def video(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("video", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        whiteboard_renderer=whiteboard,
+        video_renderer=video,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            rf"^visual object {second_object_id} kind must be stored canonically as one of: "
+            r"drawing, image, shape, text, video$"
+        ),
+    ):
+        try:
+            exporter.export("p1", tmp_path / "never-noncanonical-kind.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
