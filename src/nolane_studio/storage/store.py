@@ -526,7 +526,13 @@ class ProjectStore:
                         f"scene {scene_id} hidden visual object {object_id} "
                         f"kind must be one of: {allowed}"
                     )
-            z_index = int(item["z_index"])
+            raw_z_index = item["z_index"]
+            if not item["visible"] and type(raw_z_index) is not int:
+                raise ValueError(
+                    f"scene {scene_id} hidden visual object {object_id} "
+                    "z_index must be a non-negative integer"
+                )
+            z_index = int(raw_z_index)
             prior_visible = seen_z_visibility.get(z_index)
             if prior_visible is not None and not (prior_visible and item["visible"]):
                 raise ValueError(
