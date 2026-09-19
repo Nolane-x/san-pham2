@@ -30,7 +30,8 @@ def _label_specs(
     canvas_width: float = CANVAS_WIDTH,
     canvas_height: float = CANVAS_HEIGHT,
 ) -> tuple[ReadableLabelSpec, ...]:
-    metadata = metadata or {}
+    if metadata is None:
+        metadata = {}
     if not isinstance(metadata, Mapping):
         raise ValueError("scene metadata must be a mapping")
 
