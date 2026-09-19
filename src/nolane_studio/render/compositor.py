@@ -251,10 +251,16 @@ def validate_supported_static_visual_state(
     for raw in candidates:
         if not bool(raw.get("visible", True)):
             continue
-        object_id = str(raw.get("id", "")).strip()
+        raw_object_id = str(raw.get("id", ""))
+        object_id = raw_object_id.strip()
         if not object_id:
             raise CompositionError(
                 f"scene {plan.scene_id} contains visible object with blank id"
+            )
+        if raw_object_id != object_id:
+            raise CompositionError(
+                f"scene {plan.scene_id} contains visible object "
+                f"with noncanonical id {raw_object_id!r}"
             )
         kind = str(raw.get("kind", "")).strip().lower()
         if kind not in _SUPPORTED_VISUAL_KINDS:
