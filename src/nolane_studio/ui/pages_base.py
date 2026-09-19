@@ -413,6 +413,50 @@ class StudioPage(QWidget):
             settings_grid.addWidget(widget, row_index, 1)
         inspector_layout.addLayout(settings_grid)
 
+        self.object_timing_surface = Surface()
+        timing_grid = QGridLayout(self.object_timing_surface)
+        timing_grid.setContentsMargins(12, 10, 12, 10)
+        timing_grid.setHorizontalSpacing(8)
+        timing_grid.setVerticalSpacing(7)
+        self.object_timing_object_label = QLabel("Object timing · select a layer")
+        self.object_timing_object_label.setObjectName("muted")
+        timing_grid.addWidget(self.object_timing_object_label, 0, 0, 1, 2)
+
+        self.object_pause_spin = QDoubleSpinBox()
+        self.object_draw_spin = QDoubleSpinBox()
+        self.object_push_spin = QDoubleSpinBox()
+        for spin in (self.object_pause_spin, self.object_draw_spin, self.object_push_spin):
+            spin.setRange(0.0, 3600.0)
+            spin.setDecimals(2)
+            spin.setSingleStep(0.05)
+            spin.setSuffix(" s")
+        for row_index, (label, spin) in enumerate(
+            (
+                ("Pause", self.object_pause_spin),
+                ("Draw", self.object_draw_spin),
+                ("Push", self.object_push_spin),
+            ),
+            start=1,
+        ):
+            key = QLabel(label)
+            key.setObjectName("muted")
+            timing_grid.addWidget(key, row_index, 0)
+            timing_grid.addWidget(spin, row_index, 1)
+
+        timing_actions = QHBoxLayout()
+        self.save_object_timing_button = QPushButton("Apply timing")
+        self.save_object_timing_button.clicked.connect(self._save_selected_object_timing)
+        self.reset_object_timing_button = QPushButton("Use default")
+        self.reset_object_timing_button.setObjectName("ghost")
+        self.reset_object_timing_button.clicked.connect(self._reset_selected_object_timing)
+        timing_actions.addWidget(self.save_object_timing_button)
+        timing_actions.addWidget(self.reset_object_timing_button)
+        timing_grid.addLayout(timing_actions, 4, 0, 1, 2)
+        inspector_layout.addWidget(self.object_timing_surface)
+        self.object_timing_combo.currentIndexChanged.connect(
+            lambda _index: self._sync_object_timing_editor()
+        )
+
         self.remove_background_check = QCheckBox("Remove image background")
         self.auto_object_fx_check = QCheckBox("Auto object sound FX")
         inspector_layout.addWidget(self.remove_background_check)
@@ -468,6 +512,7 @@ class StudioPage(QWidget):
             self.object_timing_combo,
         ):
             widget.setEnabled(enabled)
+        self._sync_object_timing_editor()
 
     def _load_render_controls(self, scene_id: str) -> None:
         settings = self.store.get_scene_render_settings(scene_id)
@@ -481,6 +526,7 @@ class StudioPage(QWidget):
         self.auto_object_fx_check.setChecked(bool(settings["auto_object_fx_enabled"]))
         self._set_combo_data(self.object_timing_combo, settings["object_timing_mode"])
         self._set_render_controls_enabled(True)
+        self._sync_object_timing_editor()
 
     def _rebuild_timeline(self, scene_count: int) -> None:
         while self.timeline_track.count():
@@ -587,14 +633,17 @@ class StudioPage(QWidget):
         self.layers.blockSignals(False)
         if rows:
             self.canvas.select_object(self._selected_object_id())
+        self._sync_object_timing_editor()
 
     def _layer_selection_changed(self, current, previous) -> None:
         del previous
         if current is None:
             self.canvas.select_object(None)
+            self._sync_object_timing_editor()
             return
         value = current.data(Qt.ItemDataRole.UserRole)
         self.canvas.select_object(str(value) if value else None)
+        self._sync_object_timing_editor()
 
     def _select_object_from_canvas(self, object_id: str) -> None:
         for row in range(self.layers.count()):
@@ -603,6 +652,144 @@ class StudioPage(QWidget):
                 if self.layers.currentRow() != row:
                     self.layers.setCurrentRow(row)
                 return
+
+    def _object_timing_context(self):
+        scene_id = self._selected_scene_id()
+        object_id = self._selected_object_id()
+        if not scene_id or not object_id:
+            return None
+        objects = self.store.list_visual_objects(scene_id)
+        selected = next((obj for obj in objects if str(obj.get("id")) == object_id), None)
+        if selected is None or not bool(selected.get("visible", True)):
+            return None
+        settings = self.store.get_scene_render_settings(scene_id)
+        visible = [obj for obj in objects if bool(obj.get("visible", True))]
+        fallback_draw = (
+            float(settings["reveal_duration"]) / len(visible)
+            if visible
+            else 0.0
+        )
+        custom = settings.get("custom_object_timing_config") or []
+        entry = None
+        if isinstance(custom, list):
+            for candidate in custom:
+                if not isinstance(candidate, dict):
+                    continue
+                candidate_id = str(
+                    candidate.get("object_id") or candidate.get("id") or ""
+                ).strip()
+                if candidate_id == object_id:
+                    entry = candidate
+                    break
+        return scene_id, object_id, selected, settings, fallback_draw, entry
+
+    def _sync_object_timing_editor(self) -> None:
+        if not hasattr(self, "object_timing_surface"):
+            return
+        custom_mode = self.object_timing_combo.currentData() == "custom"
+        context = self._object_timing_context() if custom_mode else None
+        enabled = context is not None
+        for widget in (
+            self.object_pause_spin,
+            self.object_draw_spin,
+            self.object_push_spin,
+            self.save_object_timing_button,
+            self.reset_object_timing_button,
+        ):
+            widget.setEnabled(enabled)
+
+        if not custom_mode:
+            self.object_timing_object_label.setText(
+                "Object timing · switch Timing to Custom"
+            )
+            return
+        if context is None:
+            self.object_timing_object_label.setText(
+                "Object timing · select a visible layer"
+            )
+            return
+
+        _scene_id, _object_id, selected, _settings, fallback_draw, entry = context
+        self.object_timing_object_label.setText(
+            f"Object timing · {selected.get('name') or selected.get('kind') or 'Layer'}"
+        )
+        entry = entry or {}
+        self.object_pause_spin.setValue(float(entry.get("pause", 0.0) or 0.0))
+        self.object_draw_spin.setValue(
+            float(entry.get("draw", fallback_draw) if entry.get("draw") is not None else fallback_draw)
+        )
+        self.object_push_spin.setValue(float(entry.get("push", 0.0) or 0.0))
+
+    def _save_selected_object_timing(self) -> None:
+        context = self._object_timing_context()
+        if context is None:
+            self.status_message.emit("Select a visible layer before editing timing")
+            return
+        scene_id, object_id, _selected, settings, _fallback_draw, _entry = context
+        canonical = {
+            "object_id": object_id,
+            "pause": float(self.object_pause_spin.value()),
+            "draw": float(self.object_draw_spin.value()),
+            "push": float(self.object_push_spin.value()),
+        }
+        existing = settings.get("custom_object_timing_config") or []
+        updated = []
+        replaced = False
+        if isinstance(existing, list):
+            for raw in existing:
+                if not isinstance(raw, dict):
+                    updated.append(raw)
+                    continue
+                raw_id = str(raw.get("object_id") or raw.get("id") or "").strip()
+                if raw_id == object_id:
+                    if not replaced:
+                        updated.append(canonical)
+                        replaced = True
+                    continue
+                updated.append(dict(raw))
+        if not replaced:
+            updated.append(canonical)
+
+        self._set_combo_data(self.object_timing_combo, "custom")
+        self.store.update_scene_render_settings(
+            scene_id,
+            reveal_duration=self.reveal_spin.value(),
+            hold_duration=self.hold_spin.value(),
+            settings={
+                "object_timing_mode": "custom",
+                "custom_object_timing_config": updated,
+            },
+        )
+        self._sync_object_timing_editor()
+        self.status_message.emit("Object timing saved")
+
+    def _reset_selected_object_timing(self) -> None:
+        context = self._object_timing_context()
+        if context is None:
+            self.status_message.emit("Select a visible layer before resetting timing")
+            return
+        scene_id, object_id, _selected, settings, _fallback_draw, _entry = context
+        existing = settings.get("custom_object_timing_config") or []
+        updated = []
+        if isinstance(existing, list):
+            for raw in existing:
+                if not isinstance(raw, dict):
+                    updated.append(raw)
+                    continue
+                raw_id = str(raw.get("object_id") or raw.get("id") or "").strip()
+                if raw_id != object_id:
+                    updated.append(dict(raw))
+        self.store.update_scene_render_settings(
+            scene_id,
+            reveal_duration=self.reveal_spin.value(),
+            hold_duration=self.hold_spin.value(),
+            settings={
+                "object_timing_mode": "custom",
+                "custom_object_timing_config": updated,
+            },
+        )
+        self._sync_object_timing_editor()
+        self.status_message.emit("Object timing reset to scene default")
 
     def load_project(self, project_id: str, title: str, scenes: list) -> None:
         self.project_id = project_id
@@ -657,8 +844,9 @@ class StudioPage(QWidget):
             hold_duration=render_settings["hold_duration"],
             settings=copied_settings,
         )
+        object_id_map: dict[str, str] = {}
         for obj in self.store.list_visual_objects(scene_id):
-            self.store.add_visual_object(
+            copied_object_id = self.store.add_visual_object(
                 duplicate_id,
                 obj["kind"],
                 name=obj.get("name", ""),
@@ -672,6 +860,29 @@ class StudioPage(QWidget):
                 visible=obj.get("visible", True),
                 locked=obj.get("locked", False),
                 payload=obj.get("payload", {}),
+            )
+            object_id_map[str(obj["id"])] = copied_object_id
+
+        custom_timing = render_settings.get("custom_object_timing_config") or []
+        if isinstance(custom_timing, list) and custom_timing:
+            remapped_timing = []
+            for raw in custom_timing:
+                if not isinstance(raw, dict):
+                    remapped_timing.append(raw)
+                    continue
+                copied = dict(raw)
+                old_object_id = str(
+                    copied.get("object_id") or copied.get("id") or ""
+                ).strip()
+                new_object_id = object_id_map.get(old_object_id)
+                if new_object_id:
+                    copied["object_id"] = new_object_id
+                    if "id" in copied:
+                        copied["id"] = new_object_id
+                remapped_timing.append(copied)
+            self.store.update_scene_render_settings(
+                duplicate_id,
+                settings={"custom_object_timing_config": remapped_timing},
             )
         self._refresh_scenes(selected_id=duplicate_id)
         self.status_message.emit("Scene duplicated")
