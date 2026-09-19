@@ -1043,6 +1043,8 @@ class ProvidersPage(QWidget):
             ("STT model", "stt_model", current.stt_model, "transcription-model"),
             ("TTS endpoint", "tts_endpoint", current.tts_base_url, "https://provider.example/v1"),
             ("TTS model", "tts_model", current.tts_model, "speech-model"),
+            ("Advanced TTS endpoint", "tts_advanced_endpoint", current.tts_advanced_endpoint, "https://provider.example/tts"),
+            ("Voice catalog endpoint", "tts_voices_endpoint", current.tts_voices_endpoint, "https://provider.example/voices"),
         ]
         for row, (label, attr, value, placeholder) in enumerate(rows, start=1):
             cfg.addWidget(QLabel(label), row, 0)
@@ -1067,7 +1069,7 @@ class ProvidersPage(QWidget):
                 row.addWidget(Dot("#54D49A"))
                 row.addWidget(QLabel(descriptor.name))
                 row.addStretch(1)
-                caps = [name for name in ("analysis", "image", "vision", "stt", "tts", "clone", "design") if getattr(descriptor.capabilities, name)]
+                caps = [name for name in ("analysis", "image", "vision", "stt", "tts", "clone", "design", "list_voices") if getattr(descriptor.capabilities, name)]
                 chip = QLabel(" · ".join(caps) or "registered")
                 chip.setObjectName("chip")
                 row.addWidget(chip)
@@ -1091,6 +1093,8 @@ class ProvidersPage(QWidget):
             stt_model=self.stt_model.text().strip(),
             tts_base_url=self.tts_endpoint.text().strip(),
             tts_model=self.tts_model.text().strip(),
+            tts_advanced_endpoint=self.tts_advanced_endpoint.text().strip(),
+            tts_voices_endpoint=self.tts_voices_endpoint.text().strip(),
         )
         self.settings_store.save(settings)
         self.status_message.emit("Provider settings saved locally · restart to rebuild the provider registry")

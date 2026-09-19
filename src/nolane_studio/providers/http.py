@@ -148,12 +148,24 @@ class OpenAICompatibleTTSProvider:
 
 
 class GenericHttpTTSProvider:
-    """Simple JSON-in/binary-out provider useful for self-hosted wrappers."""
+    """JSON-in/binary-out advanced voice adapter for explicit wrapper endpoints."""
 
-    def __init__(self, endpoint: str, *, headers: Mapping[str, str] | None = None, transport: HttpTransport | None = None):
-        self.endpoint = endpoint
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        voices_endpoint: str | None = None,
+        headers: Mapping[str, str] | None = None,
+        transport: HttpTransport | None = None,
+    ) -> None:
+        self.endpoint = str(endpoint).strip()
+        self.voices_endpoint = (
+            str(voices_endpoint).strip() if voices_endpoint is not None else None
+        )
         self.headers = dict(headers or {})
         self.transport = transport or UrllibTransport()
+        if not self.endpoint:
+            raise ValueError("advanced TTS endpoint must not be blank")
 
     def synthesize(self, request: VoiceRequest) -> bytes:
         payload = {
@@ -165,10 +177,48 @@ class GenericHttpTTSProvider:
             "design_instructions": request.design_instructions,
             "speed": request.speed,
         }
-        response = self.transport.request("POST", self.endpoint, headers=self.headers, json_body=payload, timeout=300.0)
+        response = self.transport.request(
+            "POST",
+            self.endpoint,
+            headers=self.headers,
+            json_body=payload,
+            timeout=300.0,
+        )
         if not 200 <= response.status < 300:
             raise RuntimeError(f"generic TTS provider returned HTTP {response.status}")
         return response.body
+
+    def list_voices(self) -> list[str]:
+        if not self.voices_endpoint:
+            raise RuntimeError("voice catalog endpoint is not configured")
+        response = self.transport.request(
+            "GET",
+            self.voices_endpoint,
+            headers=self.headers,
+            timeout=60.0,
+        )
+        if not 200 <= response.status < 300:
+            raise RuntimeError(
+                f"voice catalog provider returned HTTP {response.status}"
+            )
+        try:
+            decoded = json.loads(response.body.decode("utf-8"))
+            rows = decoded.get("voices") if isinstance(decoded, Mapping) else decoded
+            if not isinstance(rows, list):
+                raise ValueError
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise ValueError("voice catalog provider returned malformed JSON") from exc
+
+        result: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            if not isinstance(row, str):
+                continue
+            voice = row.strip()
+            if voice and voice not in seen:
+                seen.add(voice)
+                result.append(voice)
+        return result
 
 
 class OpenAICompatibleImageProvider:
