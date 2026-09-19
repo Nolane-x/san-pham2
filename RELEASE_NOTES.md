@@ -1,27 +1,28 @@
-# Nolane Studio v0.12.0
+# Nolane Studio v0.13.0
 
-Selected Scene Preview forensic-parity release.
+Scene Lifecycle Timeline Integrity forensic-parity release.
 
 Highlights:
 
-- restores the recovered Studio Preview control as a real selected-scene render instead of a placeholder;
-- routes preview through the same authoritative persisted Canvas/video/whiteboard scene pipeline used by final rendering;
-- includes persisted per-scene narration in preview output;
-- honors the rebuild-owned `sceneEdits` trim-start, trim-end and playback-speed contract for the selected scene;
-- intentionally excludes project ordering and additive scene transitions because Preview is a local scene inspection action rather than a project export;
-- renders and preflights only the selected scene, so an unrelated unsupported scene cannot block local preview;
-- opens the rendered preview from the Studio toolbar after the background render task completes;
-- rejects missing/unknown selected scenes and invalid persisted edit state fail-closed;
-- preserves v0.11 grounded readable labels, v0.10 scene clip trim/speed, v0.9 object timing, v0.8 narration export, v0.7 transitions, v0.6 advanced voice, v0.5 generated images and v0.4 AI Analyze behavior.
+- makes scene Add, Duplicate, Move and Delete preflight persisted timeline state before changing the scene graph;
+- treats current persisted scene order as the authority after a scene lifecycle mutation and rewrites `mediaOrder` to the exact current scene IDs;
+- retains only transitions whose endpoints remain adjacent after the mutation, preventing an old transition from silently targeting a different visual relationship;
+- removes `sceneEdits` entries whose scene no longer exists;
+- duplicates the source scene's explicit `sceneEdits` trim/speed window when a scene is duplicated;
+- preserves existing visual-object duplication and custom object-timing ID remapping;
+- blocks scene lifecycle mutation when non-empty legacy `clips`, `videoClips` or `audioClips` buckets are present, because their mutation/retarget semantics remain unrecovered;
+- validates malformed/duplicate/unknown transition and `sceneEdits` references before mutation instead of allowing the editor to create a later export failure;
+- preserves v0.12 selected-scene preview, v0.11 grounded readable labels, v0.10 scene clip trim/speed, v0.9 object timing, v0.8 narration export, v0.7 transitions, v0.6 advanced voice, v0.5 generated images and v0.4 AI Analyze behavior.
 
 Forensic boundary:
 
-- selected-scene preview does not decode the still-unrecovered non-empty legacy `clips`, `videoClips` or `audioClips` entry schemas;
-- project transition/order behavior remains final-export-only by design for this recovered control;
-- arbitrary custom draw paths, source-exact non-default hand/background-removal behavior, object-SFX semantics and source-exact legacy label typography/decoration remain evidence-limited.
+- this release reconciles only rebuild-owned, evidence-backed timeline semantics; it does not decode or invent legacy non-empty `clips`, `videoClips`, `audioClips` or `batch_voice_segments` entries;
+- arbitrary legacy multi-track splitting/cutting remains outside this slice even though the repository contains a generic `TimelineClip/split_clip` core;
+- arbitrary custom draw paths, source-exact non-default hand/background-removal behavior, object-FX/SFX semantics and source-exact legacy label typography/decoration remain evidence-limited.
 
 Release integrity:
 
-- package metadata and runtime `__version__` are both 0.12.0;
-- preview behavior is covered by selected-only render, narration binding, trim/speed, transition exclusion, unknown-scene fail-fast and toolbar wiring tests;
-- merge is allowed only after Linux fast tests and the complete Windows test/NUI/portable/installer/checksum packaging workflow pass on the exact final head.
+- package metadata and runtime `__version__` are both 0.13.0;
+- lifecycle behavior is covered for add, duplicate, move, delete, edit cloning/pruning, transition adjacency and fail-closed opaque legacy-track state;
+- the v0.13 implementation passed its initial Linux fast-test gate before release closure;
+- merge is allowed only after Linux fast tests and the complete Windows test/NUI/portable/installer/checksum packaging workflow pass again on the exact final release head.
