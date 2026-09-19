@@ -341,3 +341,21 @@ def test_visual_object_update_rejects_non_mapping_payload(tmp_path, payload):
     with pytest.raises(ValueError, match=r"^payload must be a mapping$"):
         store.update_visual_object(object_id, payload=payload)
 
+@pytest.mark.parametrize("field", ["visible", "locked"])
+@pytest.mark.parametrize("value", ["false", 2])
+def test_visual_object_add_rejects_non_boolean_flags(tmp_path, field, value):
+    store, scene_id = _store(tmp_path)
+
+    with pytest.raises(ValueError, match=rf"^{field} must be a boolean$"):
+        store.add_visual_object(scene_id, "shape", **{field: value})
+
+
+@pytest.mark.parametrize("field", ["visible", "locked"])
+@pytest.mark.parametrize("value", ["false", 2])
+def test_visual_object_update_rejects_non_boolean_flags(tmp_path, field, value):
+    store, scene_id = _store(tmp_path)
+    object_id = store.add_visual_object(scene_id, "shape", name="Boolean writer")
+
+    with pytest.raises(ValueError, match=rf"^{field} must be a boolean$"):
+        store.update_visual_object(object_id, **{field: value})
+
