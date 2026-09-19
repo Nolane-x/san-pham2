@@ -4,6 +4,7 @@ from pathlib import Path
 
 from nolane_studio.domain import ImageRequest
 from nolane_studio.providers import ProviderCapabilities, ProviderRegistry
+from nolane_studio.render.scene_plan import build_scene_render_plan
 from nolane_studio.storage.store import ProjectStore
 
 
@@ -73,6 +74,12 @@ def test_generated_image_service_persists_stable_scene_media_and_reuses_cache(tm
         "fit": "contain",
         "generated": True,
     }
+
+    plans = build_scene_render_plan(store, "p1")
+    assert len(plans) == 1
+    assert len(plans[0].objects) == 1
+    assert plans[0].objects[0]["id"] == metadata["image_object_id"]
+    assert plans[0].objects[0]["source"] == first.path
 
     service.generate_scene("p1", scene_id, provider_name="image-test")
     objects_after_cache_hit = store.list_visual_objects(scene_id)
