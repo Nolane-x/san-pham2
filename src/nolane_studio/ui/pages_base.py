@@ -473,8 +473,9 @@ class StudioPage(QWidget):
         workspace.setSizes([260, 735, 285])
 
         timeline = Surface()
-        timeline.setMinimumHeight(155)
+        timeline.setMinimumHeight(220)
         timeline_layout = QVBoxLayout(timeline)
+        self.timeline_layout = timeline_layout
         timeline_layout.setContentsMargins(16, 12, 16, 12)
         top = QHBoxLayout()
         top.addWidget(SectionTitle("Assembly", "Timeline"))
@@ -491,7 +492,7 @@ class StudioPage(QWidget):
         vertical.addWidget(timeline)
         vertical.setStretchFactor(0, 1)
         vertical.setStretchFactor(1, 0)
-        vertical.setSizes([600, 180])
+        vertical.setSizes([570, 230])
 
     @staticmethod
     def _set_combo_data(combo: QComboBox, value: object) -> None:

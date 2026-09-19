@@ -102,6 +102,51 @@ def _atempo_filter(speed: float) -> str:
     return ",".join(f"atempo={factor:.6f}" for factor in factors)
 
 
+def _narration_filter_chain(
+    input_label: str,
+    *,
+    duration: float,
+    trim_start: float = 0.0,
+    trim_end: float | None = None,
+    speed: float = 1.0,
+    output_label: str = "narration",
+) -> str:
+    """Build narration filtering that follows the same clip window and speed."""
+    duration = float(duration)
+    trim_start = float(trim_start)
+    speed = float(speed)
+    if not math.isfinite(duration) or duration <= 0:
+        raise ValueError("duration must be finite and > 0")
+    if not math.isfinite(trim_start) or trim_start < 0:
+        raise ValueError("trim_start must be finite and >= 0")
+    if not math.isfinite(speed) or speed <= 0:
+        raise ValueError("speed must be finite and > 0")
+
+    parts: list[str] = []
+    if trim_end is not None:
+        trim_end = float(trim_end)
+        if not math.isfinite(trim_end):
+            raise ValueError("trim_end must be finite")
+        if trim_end <= trim_start:
+            raise ValueError("trim_end must be greater than trim_start")
+        parts.append(f"atrim=start={trim_start:.6f}:end={trim_end:.6f}")
+        parts.append("asetpts=PTS-STARTPTS")
+    elif trim_start:
+        parts.append(f"atrim=start={trim_start:.6f}")
+        parts.append("asetpts=PTS-STARTPTS")
+
+    if speed != 1.0:
+        parts.append(_atempo_filter(speed))
+    parts.extend(
+        [
+            "aresample=48000",
+            "apad",
+            f"atrim=duration={duration:.6f}",
+        ]
+    )
+    return f"{input_label}{','.join(parts)}[{output_label}]"
+
+
 def build_image_segment_command(
     ffmpeg: str,
     source: str,
@@ -113,6 +158,9 @@ def build_image_segment_command(
     fps: int = 24,
     profile: RenderProfile | None = None,
     narration_audio: str | None = None,
+    trim_start: float = 0.0,
+    trim_end: float | None = None,
+    speed: float = 1.0,
 ) -> list[str]:
     duration = float(duration)
     if not math.isfinite(duration):
@@ -155,8 +203,12 @@ def build_image_segment_command(
             ]
     else:
         cmd += ["-i", narration]
-        narration_graph = (
-            f"[1:a]aresample=48000,apad,atrim=duration={duration:.6f}[narration]"
+        narration_graph = _narration_filter_chain(
+            "[1:a]",
+            duration=duration,
+            trim_start=trim_start,
+            trim_end=trim_end,
+            speed=speed,
         )
         if profile is None:
             cmd += [
@@ -259,9 +311,12 @@ def build_video_segment_command(
             cmd += ["-af", _atempo_filter(speed)]
     else:
         assert narration_duration is not None
-        narration_chain = (
-            f"[1:a]aresample=48000,apad,"
-            f"atrim=duration={narration_duration:.6f}[narration]"
+        narration_chain = _narration_filter_chain(
+            "[1:a]",
+            duration=narration_duration,
+            trim_start=trim_start,
+            trim_end=trim_end,
+            speed=speed,
         )
         if has_audio:
             source_filters: list[str] = []
@@ -410,6 +465,7 @@ class MediaExporter:
                         self.ffmpeg, clip.path, str(segment), duration=clip.duration,
                         width=width, height=height, fps=fps, profile=profile,
                         narration_audio=clip.narration_audio,
+                        trim_start=clip.trim_start, trim_end=clip.trim_end, speed=clip.speed,
                     )
                 else:
                     command = build_video_segment_command(

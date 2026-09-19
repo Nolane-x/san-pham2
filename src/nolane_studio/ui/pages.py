@@ -19,7 +19,12 @@ from PySide6.QtWidgets import (
 from ..ai.object_voice import ObjectVoiceAnalyzer, merge_analysis_metadata
 from ..image_generation import ImageGenerationService
 from ..providers.registry import ProviderRegistry
-from ..render.project_export import ProjectSceneExporter
+from ..render.project_export import (
+    ProjectSceneExporter,
+    UnsupportedProjectTimeline,
+    validate_persisted_scene_edits,
+)
+from ..render.scene_plan import build_scene_render_plan
 from ..storage.store import ProjectStore
 from ..voice import VoiceFromContentService
 from .pages_base import *  # noqa: F401,F403 - compatibility facade for existing page API
@@ -229,14 +234,65 @@ class StudioPage(_BaseStudioPage):
         transition_grid.addLayout(transition_actions, 3, 0, 1, 3)
 
         self.inspector_layout.insertWidget(save_index + 3, self.transition_surface)
+
+        self.scene_edit_surface = Surface()
+        scene_edit_grid = QGridLayout(self.scene_edit_surface)
+        scene_edit_grid.setContentsMargins(12, 10, 12, 10)
+        scene_edit_grid.setHorizontalSpacing(8)
+        scene_edit_grid.setVerticalSpacing(7)
+
+        self.scene_edit_label = QLabel("Clip edit · select a scene")
+        self.scene_edit_label.setObjectName("muted")
+        scene_edit_grid.addWidget(self.scene_edit_label, 0, 0, 1, 8)
+
+        self.scene_trim_start_spin = QDoubleSpinBox()
+        self.scene_trim_start_spin.setRange(0.0, 1_000_000.0)
+        self.scene_trim_start_spin.setDecimals(3)
+        self.scene_trim_start_spin.setSingleStep(0.1)
+        self.scene_trim_start_spin.setSuffix(" s")
+        scene_edit_grid.addWidget(QLabel("Start"), 1, 0)
+        scene_edit_grid.addWidget(self.scene_trim_start_spin, 1, 1)
+
+        self.scene_trim_end_spin = QDoubleSpinBox()
+        self.scene_trim_end_spin.setRange(0.001, 1_000_000.0)
+        self.scene_trim_end_spin.setDecimals(3)
+        self.scene_trim_end_spin.setSingleStep(0.1)
+        self.scene_trim_end_spin.setSuffix(" s")
+        scene_edit_grid.addWidget(QLabel("End"), 1, 2)
+        scene_edit_grid.addWidget(self.scene_trim_end_spin, 1, 3)
+
+        self.scene_speed_spin = QDoubleSpinBox()
+        self.scene_speed_spin.setRange(0.001, 1000.0)
+        self.scene_speed_spin.setDecimals(3)
+        self.scene_speed_spin.setSingleStep(0.05)
+        self.scene_speed_spin.setValue(1.0)
+        self.scene_speed_spin.setSuffix("×")
+        scene_edit_grid.addWidget(QLabel("Speed"), 1, 4)
+        scene_edit_grid.addWidget(self.scene_speed_spin, 1, 5)
+
+        self.scene_edit_save_button = QPushButton("Apply clip edit")
+        self.scene_edit_save_button.clicked.connect(self._save_selected_scene_edit)
+        self.scene_edit_reset_button = QPushButton("Reset")
+        self.scene_edit_reset_button.setObjectName("ghost")
+        self.scene_edit_reset_button.clicked.connect(self._reset_selected_scene_edit)
+        scene_edit_grid.addWidget(self.scene_edit_save_button, 1, 6)
+        scene_edit_grid.addWidget(self.scene_edit_reset_button, 1, 7)
+
+        self.timeline_layout.insertWidget(1, self.scene_edit_surface)
+
         self.scenes.currentItemChanged.connect(
             lambda _current, _previous: self._sync_transition_editor()
         )
+        self.scenes.currentItemChanged.connect(
+            lambda _current, _previous: self._sync_scene_edit_editor()
+        )
         self._sync_transition_editor()
+        self._sync_scene_edit_editor()
 
     def load_project(self, project_id: str, title: str, scenes: list) -> None:
         super().load_project(project_id, title, scenes)
         self._sync_transition_editor()
+        self._sync_scene_edit_editor()
 
     def _effective_transition_scene_ids(self) -> list[str]:
         if not self.project_id:
@@ -389,6 +445,170 @@ class StudioPage(_BaseStudioPage):
         self.store.save_timeline(self.project_id, state)
         self._sync_transition_editor()
         self.status_message.emit("Scene transition cleared")
+
+    def _set_scene_edit_controls_enabled(self, enabled: bool) -> None:
+        for widget in (
+            self.scene_trim_start_spin,
+            self.scene_trim_end_spin,
+            self.scene_speed_spin,
+            self.scene_edit_save_button,
+            self.scene_edit_reset_button,
+        ):
+            widget.setEnabled(enabled)
+
+    def _scene_edit_durations(self) -> dict[str, float]:
+        if not self.project_id:
+            return {}
+        return {
+            str(plan.scene_id): float(plan.total_duration)
+            for plan in build_scene_render_plan(self.store, self.project_id)
+        }
+
+    def _scene_edit_state_for_edit(
+        self,
+    ) -> tuple[dict, list[dict], dict[str, float]]:
+        if not self.project_id:
+            raise RuntimeError("No project open")
+        state = self.store.load_timeline(self.project_id)
+        raw = state.get("sceneEdits", [])
+        if not isinstance(raw, list):
+            raise UnsupportedProjectTimeline("sceneEdits must be a list")
+        durations = self._scene_edit_durations()
+        validate_persisted_scene_edits(durations, state)
+        edits: list[dict] = []
+        for index, item in enumerate(raw):
+            if not isinstance(item, dict):
+                raise UnsupportedProjectTimeline(
+                    f"sceneEdits entry {index} must be a mapping"
+                )
+            edits.append(dict(item))
+        return state, edits, durations
+
+    def _sync_scene_edit_editor(self) -> None:
+        scene_id = self._selected_scene_id()
+        if not self.project_id or not scene_id:
+            self.scene_edit_label.setText("Clip edit · select a scene")
+            self._set_scene_edit_controls_enabled(False)
+            return
+
+        try:
+            _state, edits, durations = self._scene_edit_state_for_edit()
+        except (ValueError, UnsupportedProjectTimeline) as exc:
+            self.scene_edit_label.setText(f"Clip edit · invalid timeline · {exc}")
+            self._set_scene_edit_controls_enabled(False)
+            return
+
+        duration = durations.get(scene_id)
+        if duration is None or duration <= 0:
+            self.scene_edit_label.setText("Clip edit · invalid scene duration")
+            self._set_scene_edit_controls_enabled(False)
+            return
+
+        scenes = self.store.list_scenes(self.project_id)
+        try:
+            scene_number = next(
+                index + 1
+                for index, scene in enumerate(scenes)
+                if str(scene["id"]) == scene_id
+            )
+        except StopIteration:
+            self.scene_edit_label.setText("Clip edit · selected scene missing")
+            self._set_scene_edit_controls_enabled(False)
+            return
+
+        existing = next(
+            (
+                item
+                for item in edits
+                if str(item.get("scene_id", "")).strip() == scene_id
+            ),
+            None,
+        )
+        trim_start = 0.0
+        trim_end = duration
+        speed = 1.0
+        if existing is not None:
+            trim_start = float(existing["trim_start"])
+            trim_end = float(existing["trim_end"])
+            speed = float(existing["speed"])
+
+        self.scene_trim_start_spin.setMaximum(duration)
+        self.scene_trim_end_spin.setMaximum(duration)
+        self.scene_trim_start_spin.setValue(trim_start)
+        self.scene_trim_end_spin.setValue(trim_end)
+        self.scene_speed_spin.setValue(speed)
+        self.scene_edit_label.setText(
+            f"Clip edit · Scene {scene_number} · source {duration:.2f}s"
+        )
+        self._set_scene_edit_controls_enabled(True)
+
+    def _save_selected_scene_edit(self) -> None:
+        scene_id = self._selected_scene_id()
+        if not self.project_id or not scene_id:
+            self.status_message.emit("Select a scene before editing its clip")
+            return
+        try:
+            state, edits, durations = self._scene_edit_state_for_edit()
+        except (ValueError, UnsupportedProjectTimeline) as exc:
+            self.status_message.emit(f"Scene clip edit invalid · {exc}")
+            self._sync_scene_edit_editor()
+            return
+
+        duration = durations.get(scene_id)
+        if duration is None:
+            self.status_message.emit("Scene clip edit invalid · selected scene missing")
+            return
+        trim_start = float(self.scene_trim_start_spin.value())
+        trim_end = float(self.scene_trim_end_spin.value())
+        speed = float(self.scene_speed_spin.value())
+        candidate = [
+            item
+            for item in edits
+            if str(item.get("scene_id", "")).strip() != scene_id
+        ]
+        candidate.append(
+            {
+                "scene_id": scene_id,
+                "trim_start": trim_start,
+                "trim_end": trim_end,
+                "speed": speed,
+            }
+        )
+        next_state = dict(state)
+        next_state["sceneEdits"] = candidate
+        try:
+            validate_persisted_scene_edits(durations, next_state)
+        except UnsupportedProjectTimeline as exc:
+            self.status_message.emit(f"Scene clip edit invalid · {exc}")
+            return
+
+        self.store.save_timeline(self.project_id, next_state)
+        self._sync_scene_edit_editor()
+        effective = (trim_end - trim_start) / speed
+        self.status_message.emit(
+            f"Scene clip edit saved · effective duration {effective:.2f}s"
+        )
+
+    def _reset_selected_scene_edit(self) -> None:
+        scene_id = self._selected_scene_id()
+        if not self.project_id or not scene_id:
+            return
+        try:
+            state, edits, durations = self._scene_edit_state_for_edit()
+        except (ValueError, UnsupportedProjectTimeline) as exc:
+            self.status_message.emit(f"Scene clip edit invalid · {exc}")
+            self._sync_scene_edit_editor()
+            return
+        next_state = dict(state)
+        next_state["sceneEdits"] = [
+            item
+            for item in edits
+            if str(item.get("scene_id", "")).strip() != scene_id
+        ]
+        validate_persisted_scene_edits(durations, next_state)
+        self.store.save_timeline(self.project_id, next_state)
+        self._sync_scene_edit_editor()
+        self.status_message.emit("Scene clip edit reset to full duration")
 
     def _start_task(
         self,
