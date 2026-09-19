@@ -55,12 +55,12 @@ jobs:
           SUMS: ${{ steps.files.outputs.sums }}
         run: |
           set -euo pipefail
-          gh release upload v0.2.0 "$EXE" "$PORTABLE" "$SETUP" "$SUMS" --clobber
+          gh release upload v0.2.0 "$EXE" "$PORTABLE" "$SETUP" "$SUMS" --clobber --repo "$GITHUB_REPOSITORY"
 
       - name: Verify release still targets the v0.2.0 source commit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          target="$(gh release view v0.2.0 --json targetCommitish --jq .targetCommitish)"
+          target="$(gh release view v0.2.0 --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)"
           test "$target" = "3175f6af8a421375f85efc634dcee3aa6f638c57"
