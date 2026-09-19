@@ -7,6 +7,7 @@ from .config import ProviderSettings
 
 from .providers import (
     OpenAICompatibleAnalysisProvider,
+    OpenAICompatibleImageProvider,
     OpenAICompatibleSTTProvider,
     OpenAICompatibleTTSProvider,
     OpenAICompatibleVisionProvider,
