@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import shutil
 import uuid
 from collections.abc import Callable
@@ -800,6 +801,55 @@ class StudioPage(QWidget):
         )
         self.object_push_spin.setValue(float(entry.get("push", 0.0) or 0.0))
 
+    @staticmethod
+    def _timing_push_activation(
+        entries: object,
+        visible_object_ids: set[str],
+    ) -> bool | None:
+        """Return whether visible custom timing contains positive recovered push.
+
+        None means the persisted timing shape is ambiguous or malformed, so
+        the UI preserves the existing push-enable flag instead of guessing.
+        """
+        if not isinstance(entries, list):
+            return None
+        positive = False
+        for raw in entries:
+            if not isinstance(raw, dict):
+                return None
+            object_id_value = str(raw.get("object_id") or "").strip()
+            id_value = str(raw.get("id") or "").strip()
+            if object_id_value and id_value and object_id_value != id_value:
+                return None
+            object_id = object_id_value or id_value
+            if not object_id:
+                return None
+            if object_id not in visible_object_ids:
+                continue
+
+            values: list[float] = []
+            for key in ("push", "push_seconds", "push_duration"):
+                if key not in raw:
+                    continue
+                try:
+                    number = float(raw.get(key))
+                except (TypeError, ValueError):
+                    return None
+                if not math.isfinite(number):
+                    return None
+                values.append(max(0.0, number))
+            if not values:
+                continue
+            canonical = values[0]
+            if any(
+                not math.isclose(value, canonical, rel_tol=1e-12, abs_tol=1e-12)
+                for value in values[1:]
+            ):
+                return None
+            if canonical > 0:
+                positive = True
+        return positive
+
     def _save_selected_object_timing(self) -> None:
         context = self._object_timing_context()
         if context is None:
@@ -831,14 +881,23 @@ class StudioPage(QWidget):
             updated.append(canonical)
 
         self._set_combo_data(self.object_timing_combo, "custom")
+        visible_object_ids = {
+            str(obj["id"]).strip()
+            for obj in self.store.list_visual_objects(scene_id)
+            if bool(obj.get("visible", True)) and str(obj.get("id", "")).strip()
+        }
+        push_enabled = self._timing_push_activation(updated, visible_object_ids)
+        timing_settings = {
+            "object_timing_mode": "custom",
+            "custom_object_timing_config": updated,
+        }
+        if push_enabled is not None:
+            timing_settings["large_object_push_enabled"] = push_enabled
         self.store.update_scene_render_settings(
             scene_id,
             reveal_duration=self.reveal_spin.value(),
             hold_duration=self.hold_spin.value(),
-            settings={
-                "object_timing_mode": "custom",
-                "custom_object_timing_config": updated,
-            },
+            settings=timing_settings,
         )
         self._sync_object_timing_editor()
         self.status_message.emit("Object timing saved")
@@ -859,14 +918,23 @@ class StudioPage(QWidget):
                 raw_id = str(raw.get("object_id") or raw.get("id") or "").strip()
                 if raw_id != object_id:
                     updated.append(dict(raw))
+        visible_object_ids = {
+            str(obj["id"]).strip()
+            for obj in self.store.list_visual_objects(scene_id)
+            if bool(obj.get("visible", True)) and str(obj.get("id", "")).strip()
+        }
+        push_enabled = self._timing_push_activation(updated, visible_object_ids)
+        timing_settings = {
+            "object_timing_mode": "custom",
+            "custom_object_timing_config": updated,
+        }
+        if push_enabled is not None:
+            timing_settings["large_object_push_enabled"] = push_enabled
         self.store.update_scene_render_settings(
             scene_id,
             reveal_duration=self.reveal_spin.value(),
             hold_duration=self.hold_spin.value(),
-            settings={
-                "object_timing_mode": "custom",
-                "custom_object_timing_config": updated,
-            },
+            settings=timing_settings,
         )
         self._sync_object_timing_editor()
         self.status_message.emit("Object timing reset to scene default")
