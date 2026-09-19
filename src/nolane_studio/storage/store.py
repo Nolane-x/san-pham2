@@ -120,6 +120,20 @@ class ProjectStore:
         return dict(raw)
 
     @staticmethod
+    def _coerce_integer_index(value: Any, *, field: str) -> int:
+        try:
+            if isinstance(value, float):
+                if not math.isfinite(value) or not value.is_integer():
+                    raise ValueError
+                return int(value)
+            target = int(value)
+            if not isinstance(value, (int, str)) and value != target:
+                raise ValueError
+            return target
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(f"{field} must be an integer") from None
+
+    @staticmethod
     def _sync_scene_count(conn: sqlite3.Connection, project_id: str) -> None:
         count = int(
             conn.execute(
@@ -203,7 +217,10 @@ class ProjectStore:
                     (project_id,),
                 ).fetchone()[0]
             )
-            target = count if position is None else int(position)
+            target = count if position is None else self._coerce_integer_index(
+                position,
+                field="position",
+            )
             if target < 0 or target > count:
                 raise ValueError(f"position must be within 0..{count}")
             conn.execute(
@@ -329,7 +346,7 @@ class ProjectStore:
         return normalize_render_config(raw)
 
     def move_scene(self, scene_id: str, new_position: int) -> None:
-        target = int(new_position)
+        target = self._coerce_integer_index(new_position, field="position")
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT project_id, position FROM visual_editor_scenes WHERE id=?",
@@ -477,7 +494,10 @@ class ProjectStore:
                     (scene_id,),
                 ).fetchone()[0]
             )
-            target = count if z_index is None else int(z_index)
+            target = count if z_index is None else self._coerce_integer_index(
+                z_index,
+                field="z_index",
+            )
             if target < 0 or target > count:
                 raise ValueError(f"z_index must be within 0..{count}")
             conn.execute(
@@ -656,7 +676,7 @@ class ProjectStore:
             self._touch_project_for_scene(conn, str(row["scene_id"]))
 
     def move_visual_object(self, object_id: str, new_z_index: int) -> None:
-        target = int(new_z_index)
+        target = self._coerce_integer_index(new_z_index, field="z_index")
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT scene_id, z_index FROM visual_editor_objects WHERE id=?",
