@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -526,6 +527,21 @@ class ProjectStore:
                         f"scene {scene_id} hidden visual object {object_id} "
                         f"kind must be one of: {allowed}"
                     )
+            if not item["visible"]:
+                for field in ("x", "y", "width", "height", "rotation"):
+                    try:
+                        value = float(item[field])
+                    except (TypeError, ValueError, OverflowError):
+                        raise ValueError(
+                            f"scene {scene_id} hidden visual object {object_id} "
+                            f"{field} must be finite"
+                        ) from None
+                    if not math.isfinite(value):
+                        raise ValueError(
+                            f"scene {scene_id} hidden visual object {object_id} "
+                            f"{field} must be finite"
+                        )
+
             raw_z_index = item["z_index"]
             if not item["visible"] and type(raw_z_index) is not int:
                 raise ValueError(
