@@ -139,6 +139,7 @@ def test_hidden_stale_positive_timing_does_not_keep_scene_push_enabled(tmp_path)
 
 def test_malformed_other_visible_push_preserves_existing_activation_flag(tmp_path):
     _app_obj, store, page, scene, first, second = _page(tmp_path)
+    _select_layer(page, first)
     store.update_scene_render_settings(
         scene["id"],
         settings={
