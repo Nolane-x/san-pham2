@@ -137,3 +137,67 @@ def test_provider_page_exposes_and_persists_image_settings(tmp_path):
     saved = settings_store.load()
     assert saved.image_base_url == "https://images.example/v1"
     assert saved.image_model == "image-model"
+
+
+def test_generated_image_becomes_one_reusable_background_canvas_layer(tmp_path):
+    from nolane_studio.images import GeneratedImageService
+
+    class FakeImageProvider:
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, request):
+            self.calls += 1
+            return b"\x89PNG\r\n\x1a\nCANVAS"
+
+    store, scene_id = _store(tmp_path)
+    overlay_id = store.add_visual_object(
+        scene_id,
+        "text",
+        name="Existing overlay",
+        x=100,
+        y=100,
+        width=500,
+        height=100,
+        payload={"text": "Keep me above the generated background"},
+    )
+    fake = FakeImageProvider()
+    registry = ProviderRegistry()
+    registry.register(
+        "image-api",
+        ProviderCapabilities(image=True),
+        lambda: fake,
+    )
+    service = GeneratedImageService(store, registry, tmp_path / "workspace")
+
+    first = service.generate_scene("p1", scene_id, provider_name="image-api")
+    objects = store.list_visual_objects(scene_id)
+    generated = [
+        item
+        for item in objects
+        if item["kind"] == "image"
+        and item["payload"].get("generated_scene_image") is True
+    ]
+    assert len(generated) == 1
+    assert generated[0]["source"] == first.path
+    assert generated[0]["z_index"] == 0
+    assert generated[0]["width"] == 1280
+    assert generated[0]["height"] == 720
+    assert generated[0]["payload"]["media_id"] == first.media_id
+
+    overlay = next(item for item in objects if item["id"] == overlay_id)
+    assert overlay["z_index"] == 1
+
+    store.update_scene(scene_id, image_prompt="A newly generated scene background.")
+    second = service.generate_scene("p1", scene_id, provider_name="image-api")
+    objects = store.list_visual_objects(scene_id)
+    generated_again = [
+        item
+        for item in objects
+        if item["kind"] == "image"
+        and item["payload"].get("generated_scene_image") is True
+    ]
+    assert len(generated_again) == 1
+    assert generated_again[0]["id"] == generated[0]["id"]
+    assert generated_again[0]["source"] == second.path
+    assert fake.calls == 2
