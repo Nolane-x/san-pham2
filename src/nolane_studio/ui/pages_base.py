@@ -810,11 +810,164 @@ class StudioPage(QWidget):
         self._refresh_scenes(fallback_row=0)
         self._refresh_media()
 
+    def _scene_mutation_timeline_state(self) -> dict:
+        """Preflight timeline state before a scene lifecycle mutation.
+
+        Non-empty legacy clip buckets remain intentionally opaque. Mutating the
+        scene graph while those tracks are present could orphan or silently
+        retarget recovered state, so scene lifecycle actions fail closed.
+        """
+        if not self.project_id:
+            raise ValueError("no project is open")
+        state = self.store.load_timeline(self.project_id)
+        clips = state.get("clips", {})
+        video_clips = state.get("videoClips", [])
+        audio_clips = state.get("audioClips", [])
+        media_order = state.get("mediaOrder", [])
+        transitions = state.get("transitions", [])
+        scene_edits = state.get("sceneEdits", [])
+
+        if not isinstance(clips, dict):
+            raise ValueError("legacy clips state must be a mapping")
+        if not isinstance(video_clips, list):
+            raise ValueError("legacy videoClips state must be a list")
+        if not isinstance(audio_clips, list):
+            raise ValueError("legacy audioClips state must be a list")
+        if clips or video_clips or audio_clips:
+            raise ValueError(
+                "legacy timeline tracks are present and their mutation semantics are unrecovered"
+            )
+        if not isinstance(media_order, list):
+            raise ValueError("mediaOrder must be a list")
+        if not isinstance(transitions, list):
+            raise ValueError("transitions must be a list")
+        if not isinstance(scene_edits, list):
+            raise ValueError("sceneEdits must be a list")
+
+        scene_ids = [
+            str(scene["id"]).strip()
+            for scene in self.store.list_scenes(self.project_id)
+        ]
+        if any(not scene_id for scene_id in scene_ids) or len(set(scene_ids)) != len(scene_ids):
+            raise ValueError("project scene ids must be non-blank and unique")
+
+        effective_order = scene_ids
+        if media_order:
+            normalized_order = [str(item).strip() for item in media_order]
+            if (
+                any(not scene_id for scene_id in normalized_order)
+                or len(normalized_order) != len(scene_ids)
+                or len(set(normalized_order)) != len(normalized_order)
+                or set(normalized_order) != set(scene_ids)
+            ):
+                raise ValueError("mediaOrder must be an exact permutation before scene mutation")
+            effective_order = normalized_order
+
+        adjacent = set(zip(effective_order, effective_order[1:]))
+        seen_transitions: set[tuple[str, str]] = set()
+        for index, item in enumerate(transitions):
+            if not isinstance(item, dict):
+                raise ValueError(f"transition entry {index} must be a mapping")
+            from_id = str(item.get("from_id", "")).strip()
+            to_id = str(item.get("to_id", "")).strip()
+            pair = (from_id, to_id)
+            if not from_id or not to_id:
+                raise ValueError(f"transition entry {index} ids must not be blank")
+            if pair not in adjacent:
+                raise ValueError(
+                    f"transition entry {index} must reference adjacent scenes before mutation"
+                )
+            if pair in seen_transitions:
+                raise ValueError(f"transition entry {index} duplicates an existing pair")
+            seen_transitions.add(pair)
+
+        seen_edits: set[str] = set()
+        scene_id_set = set(scene_ids)
+        for index, item in enumerate(scene_edits):
+            if not isinstance(item, dict):
+                raise ValueError(f"sceneEdits entry {index} must be a mapping")
+            scene_id = str(item.get("scene_id", "")).strip()
+            if not scene_id:
+                raise ValueError(f"sceneEdits entry {index} scene_id must not be blank")
+            if scene_id not in scene_id_set:
+                raise ValueError(
+                    f"sceneEdits entry {index} references unknown scene: {scene_id}"
+                )
+            if scene_id in seen_edits:
+                raise ValueError(f"sceneEdits contains duplicate scene_id: {scene_id}")
+            seen_edits.add(scene_id)
+        return dict(state)
+
+    def _reconcile_scene_mutation_timeline(
+        self,
+        state: dict,
+        *,
+        clone_scene_edit: tuple[str, str] | None = None,
+    ) -> None:
+        if not self.project_id:
+            return
+        scene_ids = [
+            str(scene["id"]).strip()
+            for scene in self.store.list_scenes(self.project_id)
+        ]
+        scene_id_set = set(scene_ids)
+        adjacent = set(zip(scene_ids, scene_ids[1:]))
+
+        state["mediaOrder"] = list(scene_ids)
+        state["transitions"] = [
+            dict(item)
+            for item in state.get("transitions", [])
+            if (
+                str(item.get("from_id", "")).strip(),
+                str(item.get("to_id", "")).strip(),
+            )
+            in adjacent
+        ]
+
+        source_id = target_id = None
+        if clone_scene_edit is not None:
+            source_id, target_id = clone_scene_edit
+
+        edits: list[dict] = []
+        target_already_present = False
+        for item in state.get("sceneEdits", []):
+            scene_id = str(item.get("scene_id", "")).strip()
+            if scene_id not in scene_id_set:
+                continue
+            copied = dict(item)
+            edits.append(copied)
+            if target_id is not None and scene_id == target_id:
+                target_already_present = True
+            if (
+                source_id is not None
+                and target_id is not None
+                and scene_id == source_id
+                and target_id in scene_id_set
+                and not target_already_present
+            ):
+                cloned = dict(copied)
+                cloned["scene_id"] = target_id
+                edits.append(cloned)
+                target_already_present = True
+        state["sceneEdits"] = edits
+        self.store.save_timeline(self.project_id, state)
+
+    def _prepare_scene_mutation(self) -> dict | None:
+        try:
+            return self._scene_mutation_timeline_state()
+        except ValueError as exc:
+            self.status_message.emit(f"Scene change blocked · {exc}")
+            return None
+
     def _add_scene(self) -> None:
         if not self.project_id:
             self.status_message.emit("Create or open a project before adding scenes")
             return
+        timeline_state = self._prepare_scene_mutation()
+        if timeline_state is None:
+            return
         scene_id = self.store.add_scene(self.project_id, "New scene")
+        self._reconcile_scene_mutation_timeline(timeline_state)
         self._refresh_scenes(selected_id=scene_id, fallback_row=self.scenes.count())
         self.status_message.emit("Scene added")
 
@@ -824,6 +977,9 @@ class StudioPage(QWidget):
         scene_id = self._selected_scene_id()
         scene = self._scene_by_id(scene_id)
         if scene is None or not scene_id:
+            return
+        timeline_state = self._prepare_scene_mutation()
+        if timeline_state is None:
             return
         render_settings = self.store.get_scene_render_settings(scene_id)
         duplicate_id = self.store.add_scene(
@@ -886,6 +1042,10 @@ class StudioPage(QWidget):
                 duplicate_id,
                 settings={"custom_object_timing_config": remapped_timing},
             )
+        self._reconcile_scene_mutation_timeline(
+            timeline_state,
+            clone_scene_edit=(scene_id, duplicate_id),
+        )
         self._refresh_scenes(selected_id=duplicate_id)
         self.status_message.emit("Scene duplicated")
 
@@ -897,7 +1057,11 @@ class StudioPage(QWidget):
         target_row = current_row + int(delta)
         if target_row < 0 or target_row >= self.scenes.count():
             return
+        timeline_state = self._prepare_scene_mutation()
+        if timeline_state is None:
+            return
         self.store.move_scene(scene_id, target_row)
+        self._reconcile_scene_mutation_timeline(timeline_state)
         self._refresh_scenes(selected_id=scene_id)
         self.status_message.emit("Scene order updated")
 
@@ -907,13 +1071,18 @@ class StudioPage(QWidget):
         scene_id = self._selected_scene_id()
         if not scene_id:
             return
+        timeline_state = self._prepare_scene_mutation()
+        if timeline_state is None:
+            return
         current_row = self.scenes.currentRow()
         self.store.delete_scene(scene_id)
         rows = self.store.list_scenes(self.project_id)
         if not rows:
             replacement_id = self.store.add_scene(self.project_id, "Blank scene")
+            self._reconcile_scene_mutation_timeline(timeline_state)
             self._refresh_scenes(selected_id=replacement_id)
         else:
+            self._reconcile_scene_mutation_timeline(timeline_state)
             self._refresh_scenes(fallback_row=min(current_row, len(rows) - 1))
         self.status_message.emit("Scene deleted")
 
