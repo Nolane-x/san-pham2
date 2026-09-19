@@ -9,11 +9,12 @@ The product is a clean rebuild based on behavior recovered from a legacy Windows
 - **Create** — paste a script and generate a deterministic local scene plan before any provider is contacted.
 - **Studio** — creator workspace with Scenes, Canvas, Inspector and Timeline regions.
 - **Media import and attachment** — images, narration audio and video are copied into the local project workspace and can be attached explicitly to scenes.
+- **Generated images** — per-scene Generate image and project-wide Generate All Images use hardened scene prompts, stable cached media slots and persisted background Canvas objects that flow into the authoritative render plan.
 - **AI Analyze** — configured STT supplies narration timing, configured vision supplies grounded object identity/location, and deterministic local logic joins the result into scene metadata with content-based caching.
 - **Voice generation** — per-scene Generate voice and project-wide Voice From Content use configurable TTS providers and stable cached scene media slots.
 - **Windows video export** — media is normalized sequentially with FFmpeg and exported as H.264/AAC MP4 without loading all frames into RAM.
 - **Library** — durable local SQLite projects with no expiry timer.
-- **Providers** — configurable Analysis, Vision, STT and TTS endpoints; environment variables can override local settings for automation.
+- **Providers** — configurable Analysis, Image, Vision, STT and TTS endpoints; environment variables can override local settings for automation.
 - **Low-memory startup** — opening the app does not start a local LLM, TTS model, speech model or image model.
 
 ## Product shape
@@ -31,7 +32,7 @@ Library
   durable local projects + imported media
 
 Providers
-  analysis API / vision API / STT API / TTS API
+  analysis API / image API / vision API / STT API / TTS API
 ```
 
 ## Windows release
@@ -76,6 +77,8 @@ Settings can be entered from the Providers screen. Automation can override them 
 ```text
 NOLANE_STUDIO_AI_BASE_URL=https://provider.example/v1
 NOLANE_STUDIO_AI_MODEL=analysis-model
+NOLANE_STUDIO_IMAGE_BASE_URL=https://provider.example/v1
+NOLANE_STUDIO_IMAGE_MODEL=image-model
 NOLANE_STUDIO_VISION_BASE_URL=https://provider.example/v1
 NOLANE_STUDIO_VISION_MODEL=vision-model
 NOLANE_STUDIO_STT_BASE_URL=https://provider.example/v1
@@ -92,7 +95,7 @@ The API key is intentionally **not** persisted in `settings.json`.
 - `nolane_studio.domain` — pure scene/project/render/voice contracts.
 - `nolane_studio.storage` — SQLite project, media and timeline state.
 - `nolane_studio.ai` — deterministic scene planning and prompt hardening.
-- `nolane_studio.providers` — lazy Analysis/Vision/STT/TTS providers.
+- `nolane_studio.providers` — lazy Analysis/Image/Vision/STT/TTS providers.
 - `nolane_studio.render` — FFmpeg command planning and low-memory mixed-media export.
 - `nolane_studio.ui` — PySide6 desktop workspace.
 
@@ -100,4 +103,4 @@ See [`RECOVERED_ARCHITECTURE.md`](RECOVERED_ARCHITECTURE.md) for the behavioral 
 
 ## Current boundary
 
-This release is a strong native rebuild foundation with a working creator shell, local project/media flow and mixed image/video export. It does **not** yet claim parity for every advanced legacy drawing algorithm, object-level whiteboard animation, multi-track trimming/cutting, transition editor, generated-image workflow or complete voice-generation UX. Those are tracked as subsequent parity layers rather than being hidden behind a false “finished” claim.
+This release includes the recovered API-first generated-image workflow, but it does **not** yet claim parity for every advanced legacy drawing algorithm, object-level whiteboard animation, multi-track trimming/cutting, transition editor, automatic exact-label post-processing whose source/layout contract has not yet been recovered strongly enough, or complete voice-generation UX. Those remain subsequent parity layers rather than being hidden behind a false “finished” claim.
