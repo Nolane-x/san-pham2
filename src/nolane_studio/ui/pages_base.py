@@ -814,6 +814,7 @@ class StudioPage(QWidget):
         if not isinstance(entries, list):
             return None
         positive = False
+        seen_visible_ids: set[str] = set()
         for raw in entries:
             if not isinstance(raw, dict):
                 return None
@@ -826,6 +827,9 @@ class StudioPage(QWidget):
                 return None
             if object_id not in visible_object_ids:
                 continue
+            if object_id in seen_visible_ids:
+                return None
+            seen_visible_ids.add(object_id)
 
             values: list[float] = []
             for key in ("push", "push_seconds", "push_duration"):
