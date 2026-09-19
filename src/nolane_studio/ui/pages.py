@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Qt, Signal
+from PySide6.QtCore import QThread, QUrl, Qt, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -93,6 +94,7 @@ class StudioPage(_BaseStudioPage):
         super().__init__(store, parent)
         self.providers = providers or ProviderRegistry()
         self._task_workers: list[TaskWorker] = []
+        self.preview_button.clicked.connect(self._preview_selected_scene)
 
         self.generate_image_button = QPushButton("Generate image")
         self.generate_image_button.setToolTip(
@@ -651,6 +653,34 @@ class StudioPage(_BaseStudioPage):
         worker.failed.connect(failed)
         worker.finished.connect(cleanup)
         worker.start()
+
+    def _preview_selected_scene(self) -> None:
+        if not self.project_id:
+            self.status_message.emit("Open a project before previewing")
+            return
+        scene_id = self._selected_scene_id()
+        if not scene_id:
+            self.status_message.emit("Select a scene before previewing")
+            return
+
+        project_id = self.project_id
+        output = (
+            Path(self.store.db_path).parent
+            / "preview"
+            / f"{project_id}-{scene_id}.mp4"
+        )
+        exporter = ProjectSceneExporter(self.store)
+
+        def open_preview(result: object) -> None:
+            path = Path(str(result)).resolve()
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+        self._start_task(
+            lambda: exporter.preview_scene(project_id, scene_id, output),
+            started="Preview · rendering selected scene…",
+            success=lambda result: f"Preview ready · {Path(str(result)).name}",
+            on_result=open_preview,
+        )
 
     def _provider_name(self, capability: str) -> str:
         matches = self.providers.find(**{capability: True})
