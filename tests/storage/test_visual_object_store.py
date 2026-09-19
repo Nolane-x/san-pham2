@@ -166,3 +166,33 @@ def test_visual_object_read_rejects_duplicate_persisted_z_index_even_when_hidden
         store.list_visual_objects(scene_id)
 
     assert first != second
+
+
+
+@pytest.mark.parametrize(
+    ("corrupt_id", "message"),
+    [
+        ("", "contains hidden visual object with blank id"),
+        ("  hidden-object  ", "contains hidden visual object with noncanonical id '  hidden-object  '"),
+    ],
+)
+def test_visual_object_read_rejects_hidden_noncanonical_identity(tmp_path, corrupt_id, message):
+    store, scene_id = _store(tmp_path)
+    object_id = store.add_visual_object(
+        scene_id,
+        "shape",
+        name="Hidden identity integrity",
+        visible=False,
+    )
+
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_objects SET id=? WHERE id=?",
+            (corrupt_id, object_id),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^scene {scene_id} {message}$",
+    ):
+        store.list_visual_objects(scene_id)
