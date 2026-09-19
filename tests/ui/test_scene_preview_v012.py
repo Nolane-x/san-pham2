@@ -40,22 +40,32 @@ def test_preview_toolbar_action_uses_selected_scene_preview_and_opens_result(
         return path
 
     opened = []
+    statuses = []
     monkeypatch.setattr(ProjectSceneExporter, "preview_scene", fake_preview)
-    monkeypatch.setattr(
-        pages_module.QDesktopServices,
-        "openUrl",
-        lambda url: opened.append(url.toLocalFile()) or True,
-    )
+
+    class FakeDesktopServices:
+        @staticmethod
+        def openUrl(url):
+            opened.append(url.toLocalFile())
+            return True
+
+    monkeypatch.setattr(pages_module, "QDesktopServices", FakeDesktopServices)
 
     page = StudioPage(store)
     page.load_project("p1", "Preview UI", [])
+
+    def run_now(task, *, started, success, on_result=None):
+        statuses.append(started)
+        result = task()
+        if on_result is not None:
+            on_result(result)
+        statuses.append(success(result))
+
+    monkeypatch.setattr(page, "_start_task", run_now)
     assert page.preview_button.text() == "Preview"
     assert "selected scene" in page.preview_button.toolTip().lower()
 
     page.preview_button.click()
-    workers = list(page._task_workers)
-    assert len(workers) == 1
-    assert workers[0].wait(3000)
     app.processEvents()
 
     assert calls
@@ -63,3 +73,5 @@ def test_preview_toolbar_action_uses_selected_scene_preview_and_opens_result(
     assert calls[0][1] == scene["id"]
     assert calls[0][2].name == f"p1-{scene['id']}.mp4"
     assert opened == [str(calls[0][2].resolve())]
+    assert statuses[0].startswith("Preview")
+    assert statuses[-1].startswith("Preview ready")
