@@ -18,12 +18,15 @@ def _app() -> QApplication:
     return QApplication.instance() or QApplication([])
 
 
-def _page(tmp_path: Path):
+def _page(tmp_path: Path, texts: tuple[str, ...] = ("First", "Second")):
     _app()
     store = ProjectStore(tmp_path / "studio.db")
     store.initialize()
     store.create_project("p1", "Split")
-    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Second")])
+    store.replace_scenes(
+        "p1",
+        [Scene(index, text) for index, text in enumerate(texts)],
+    )
     scenes = store.list_scenes("p1")
     for scene in scenes:
         store.update_scene_render_settings(
@@ -192,3 +195,56 @@ def test_split_scene_rejects_boundary_without_mutating_project(tmp_path):
     ]
     assert messages
     assert "inside" in messages[-1].lower() or "split" in messages[-1].lower()
+
+
+def test_split_scene_keeps_incoming_transition_and_moves_outgoing_to_right_half(tmp_path):
+    store, page, scenes = _page(tmp_path, ("Previous", "Source", "Next"))
+    previous, source, following = scenes
+    state = _base_state([scene["id"] for scene in scenes])
+    state["transitions"] = [
+        {
+            "from_id": previous["id"],
+            "to_id": source["id"],
+            "effect": "wipeleft",
+            "duration": 0.25,
+        },
+        {
+            "from_id": source["id"],
+            "to_id": following["id"],
+            "effect": "fade",
+            "duration": 0.4,
+        },
+    ]
+    store.save_timeline("p1", state)
+
+    page.scenes.setCurrentRow(1)
+    page._sync_scene_edit_editor()
+    page.scene_split_at_spin.setValue(1.0)
+    page._split_selected_scene()
+
+    after = store.list_scenes("p1")
+    assert len(after) == 4
+    prev_after, left, right, next_after = after
+    assert prev_after["id"] == previous["id"]
+    assert left["id"] == source["id"]
+    assert next_after["id"] == following["id"]
+
+    transitions = store.load_timeline("p1")["transitions"]
+    assert transitions == [
+        {
+            "from_id": prev_after["id"],
+            "to_id": left["id"],
+            "effect": "wipeleft",
+            "duration": 0.25,
+        },
+        {
+            "from_id": right["id"],
+            "to_id": next_after["id"],
+            "effect": "fade",
+            "duration": 0.4,
+        },
+    ]
+    assert not any(
+        item["from_id"] == left["id"] and item["to_id"] == right["id"]
+        for item in transitions
+    )
