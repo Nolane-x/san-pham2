@@ -687,6 +687,7 @@ class StudioPage(QWidget):
         if not hasattr(self, "object_timing_surface"):
             return
         custom_mode = self.object_timing_combo.currentData() == "custom"
+        self.object_timing_surface.setVisible(custom_mode)
         context = self._object_timing_context() if custom_mode else None
         enabled = context is not None
         for widget in (
