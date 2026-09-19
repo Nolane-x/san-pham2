@@ -1,27 +1,28 @@
-# Nolane Studio v0.9.0
+# Nolane Studio v0.10.0
 
-Object-level Whiteboard Timing Editor forensic-parity release.
+Scene Clip Trim and Speed forensic-parity release.
 
 Highlights:
 
-- exposes the recovered per-object whiteboard timing contract directly in Studio for the selected visible Canvas layer;
-- supports explicit per-object `pause`, `draw` and `push` durations without changing the render engine's sequential timing semantics;
-- uses the existing engine fallback for objects without an explicit custom entry: zero pause/push and `reveal_duration / visible_object_count` draw time;
-- keeps timing controls synchronized with Canvas/layer selection and disables object timing when the scene is in Fixed mode or no visible layer is selected;
-- applies one selected-object timing override without destroying unrelated timing entries;
-- adds a per-object **Use default** action that removes only the selected override and returns that layer to the recovered engine fallback;
-- fixes scene duplication so custom timing entries are remapped from source object IDs to the copied scene's new object IDs instead of silently falling back to defaults;
-- preserves the existing whiteboard compositor, brush-direction, push, outro, camera, scene narration and additive transition behavior;
-- preserves v0.8 scene narration export, v0.7 transitions, v0.6 advanced voice, v0.5 generated images, v0.4 AI Analyze and v0.3 Canvas/Object behavior.
+- restores direct scene-level clip editing through an explicit rebuild-owned `sceneEdits` timeline contract keyed by stable scene identity;
+- supports persisted trim start, trim end and playback speed without decoding the still-unrecovered legacy `clips`, `videoClips` or `audioClips` entry schemas;
+- validates scene edit state fail-closed: unknown scenes, duplicate entries, non-finite values, reversed/out-of-range trim windows and non-positive speeds are rejected;
+- applies the edited source window and speed consistently to final visual clips and persisted per-scene narration;
+- keeps source-video audio synchronized with the edited visual clip while narration follows the same trim/speed window before final duration normalization;
+- keeps additive scene transitions independent from clip edits instead of silently converting them into overlap semantics;
+- exposes selected-scene Start / End / Speed controls in Studio with reset-to-full-duration behavior;
+- preserves unrelated scene edits, transition state and unrecovered legacy timeline payloads when saving one scene edit;
+- preserves v0.9 object timing, v0.8 scene narration export, v0.7 transitions, v0.6 advanced voice, v0.5 generated images, v0.4 AI Analyze and v0.3 Canvas/Object behavior.
 
 Forensic boundary:
 
 - arbitrary custom draw paths, non-default hand rendering, background removal and object-FX/SFX semantics remain evidence-limited;
-- non-empty legacy `clips`, `videoClips`, `audioClips` and `batch_voice_segments` payload schemas remain fail-closed;
+- arbitrary legacy multi-track clip splitting/cutting and the non-empty `clips`, `videoClips`, `audioClips` and `batch_voice_segments` entry schemas remain fail-closed rather than guessed;
 - automatic exact readable-label post-processing remains evidence-limited because its recovered source/layout contract is still incomplete.
 
 Release integrity:
 
-- v0.8.0 remains the Scene Narration Final Export baseline;
-- v0.9.0 is the first release where recovered custom per-object pause/draw/push timing is directly editable in Studio;
-- final exact-head verification must pass the complete Linux/Windows suite, NUI evidence, portable executable smoke, installer validation, checksums and artifact upload before merge.
+- v0.9.0 remains the Object-level Whiteboard Timing Editor baseline;
+- v0.10.0 is the first release where recovered scene-level trim/start-end/speed behavior is persisted explicitly and applied to authoritative final export;
+- the feature implementation passed exact-head Linux fast tests and the full Windows test, NUI evidence, portable executable, installer, checksum and artifact packaging gates before its feature PR was merged;
+- this metadata closure must itself pass the same branch gates before merge.
