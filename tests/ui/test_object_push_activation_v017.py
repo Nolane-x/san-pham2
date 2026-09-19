@@ -159,6 +159,31 @@ def test_malformed_other_visible_push_preserves_existing_activation_flag(tmp_pat
     assert settings["large_object_push_enabled"] is True
 
 
+
+def test_duplicate_other_visible_timing_preserves_existing_activation_flag(tmp_path):
+    _app_obj, store, page, scene, first, second = _page(tmp_path)
+    _select_layer(page, first)
+    store.update_scene_render_settings(
+        scene["id"],
+        settings={
+            "large_object_push_enabled": False,
+            "custom_object_timing_config": [
+                {"object_id": first, "draw": 0.5, "push": 0.0},
+                {"object_id": second, "draw": 0.5, "push": 0.4},
+                {"object_id": second, "draw": 0.5, "push": 0.0},
+            ],
+        },
+    )
+    page._load_render_controls(scene["id"])
+    _select_layer(page, first)
+    page.object_push_spin.setValue(0.0)
+    page._save_selected_object_timing()
+
+    settings = store.get_scene_render_settings(scene["id"])
+    assert settings["large_object_push_enabled"] is False
+
+
+
 def test_ui_saved_positive_push_passes_project_export_push_preflight(tmp_path):
     _app_obj, store, page, scene, _first, second = _page(tmp_path)
     _select_layer(page, second)
