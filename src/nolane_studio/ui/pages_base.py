@@ -397,6 +397,24 @@ class StudioPage(QWidget):
         self.object_timing_combo.addItem("Fixed", "fixed")
         self.object_timing_combo.addItem("Custom", "custom")
 
+        self.outro_enabled_check = QCheckBox("Enabled")
+        self.outro_enabled_check.setToolTip(
+            "Recovered whiteboard outro: move the fully revealed scene left after the final hold"
+        )
+        self.outro_direction_combo = QComboBox()
+        self.outro_direction_combo.addItem("Left", "left")
+        self.outro_duration_spin = QDoubleSpinBox()
+        self.outro_duration_spin.setRange(0.0, 5.0)
+        self.outro_duration_spin.setDecimals(2)
+        self.outro_duration_spin.setSingleStep(0.05)
+        self.outro_duration_spin.setSuffix(" s")
+        self.render_style_combo.currentIndexChanged.connect(
+            lambda _index: self._sync_outro_controls()
+        )
+        self.outro_enabled_check.toggled.connect(
+            lambda _checked: self._sync_outro_controls()
+        )
+
         controls = (
             ("Reveal", self.reveal_spin),
             ("Hold", self.hold_spin),
@@ -405,6 +423,9 @@ class StudioPage(QWidget):
             ("Brush", self.brush_mode_combo),
             ("Hand", self.hand_style_combo),
             ("Timing", self.object_timing_combo),
+            ("Outro", self.outro_enabled_check),
+            ("Outro direction", self.outro_direction_combo),
+            ("Outro duration", self.outro_duration_spin),
         )
         for row_index, (label, widget) in enumerate(controls):
             key = QLabel(label)
@@ -525,6 +546,9 @@ class StudioPage(QWidget):
             self.visual_mode_combo,
             self.brush_mode_combo,
             self.hand_style_combo,
+            self.outro_enabled_check,
+            self.outro_direction_combo,
+            self.outro_duration_spin,
             self.remove_background_check,
             self.auto_object_fx_check,
             self.object_timing_combo,
@@ -533,6 +557,24 @@ class StudioPage(QWidget):
         ):
             widget.setEnabled(enabled)
         self._sync_object_timing_editor()
+        self._sync_outro_controls()
+
+    def _sync_outro_controls(self) -> None:
+        base_enabled = self.render_style_combo.isEnabled()
+        is_whiteboard = self.render_style_combo.currentData() == "whiteboard"
+        enabled = base_enabled and is_whiteboard
+        self.outro_enabled_check.setEnabled(enabled)
+        detail_enabled = enabled and self.outro_enabled_check.isChecked()
+        self.outro_direction_combo.setEnabled(detail_enabled)
+        self.outro_duration_spin.setEnabled(detail_enabled)
+        if is_whiteboard:
+            self.outro_enabled_check.setToolTip(
+                "Recovered whiteboard outro: move the fully revealed scene left after the final hold"
+            )
+        else:
+            self.outro_enabled_check.setToolTip(
+                "Outro rendering is currently verified only for whiteboard scenes"
+            )
 
     def _load_render_controls(self, scene_id: str) -> None:
         settings = self.store.get_scene_render_settings(scene_id)
@@ -542,11 +584,23 @@ class StudioPage(QWidget):
         self._set_combo_data(self.visual_mode_combo, settings["visual_mode"])
         self._set_combo_data(self.brush_mode_combo, settings["brush_mode"])
         self._set_combo_data(self.hand_style_combo, settings["hand_style"])
+        self.outro_enabled_check.setChecked(bool(settings["outro_enabled"]))
+        outro_direction = str(settings.get("outro_direction", "left") or "left").strip()
+        self.outro_direction_combo.clear()
+        self.outro_direction_combo.addItem("Left", "left")
+        if outro_direction != "left":
+            self.outro_direction_combo.addItem(
+                f"Unsupported · {outro_direction}",
+                outro_direction,
+            )
+        self._set_combo_data(self.outro_direction_combo, outro_direction)
+        self.outro_duration_spin.setValue(float(settings["outro_duration"]))
         self.remove_background_check.setChecked(bool(settings["remove_background_enabled"]))
         self.auto_object_fx_check.setChecked(bool(settings["auto_object_fx_enabled"]))
         self._set_combo_data(self.object_timing_combo, settings["object_timing_mode"])
         self._set_render_controls_enabled(True)
         self._sync_object_timing_editor()
+        self._sync_outro_controls()
 
     def _rebuild_timeline(self, scene_count: int) -> None:
         while self.timeline_track.count():
@@ -1125,6 +1179,9 @@ class StudioPage(QWidget):
             "remove_background_enabled": self.remove_background_check.isChecked(),
             "auto_object_fx_enabled": self.auto_object_fx_check.isChecked(),
             "object_timing_mode": self.object_timing_combo.currentData(),
+            "outro_enabled": self.outro_enabled_check.isChecked(),
+            "outro_direction": self.outro_direction_combo.currentData(),
+            "outro_duration": self.outro_duration_spin.value(),
         }
 
     def _apply_render_settings_to_all_scenes(self) -> None:
