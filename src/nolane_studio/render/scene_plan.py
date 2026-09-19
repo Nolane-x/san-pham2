@@ -33,6 +33,7 @@ class SceneRenderPlan:
     total_duration: float
     media_sources: tuple[str, ...]
     render_config: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 def _outro_seconds(settings: Mapping[str, Any]) -> float:
@@ -107,6 +108,7 @@ def build_scene_render_plan(store: ScenePlanStore, project_id: str) -> list[Scen
                 total_duration=float(total),
                 media_sources=media_sources,
                 render_config=render_config,
+                metadata=dict(scene.get("metadata") or {}),
             )
         )
     return plans

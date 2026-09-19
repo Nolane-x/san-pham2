@@ -12,6 +12,7 @@ The product is a clean rebuild based on behavior recovered from a legacy Windows
 - **Generated images** — per-scene Generate image and project-wide Generate All Images use hardened scene prompts, stable cached media slots and persisted background Canvas objects that flow into the authoritative render plan.
 - **AI Analyze** — configured STT supplies narration timing, configured vision supplies grounded object identity/location, and deterministic local logic joins the result into scene metadata with content-based caching.
 - **Voice generation** — per-scene Generate voice and project-wide Voice From Content use capability-driven providers with stable cached scene media slots; providers may additionally expose reference-audio cloning, designed voices and voice discovery.
+- **Scene narration export** — persisted per-scene narration is preflighted before rendering and normalized into each final scene clip; source-video audio is mixed with narration while silent visual scenes use narration directly.
 - **Scene transitions** — edit the selected scene → next-scene transition with persisted effect/duration; final export inserts validated additive transition segments without shortening scene clips.
 - **Windows video export** — media is normalized sequentially with FFmpeg and exported as H.264/AAC MP4 without loading all frames into RAM.
 - **Library** — durable local SQLite projects with no expiry timer.
@@ -108,4 +109,4 @@ See [`RECOVERED_ARCHITECTURE.md`](RECOVERED_ARCHITECTURE.md) for the behavioral 
 
 ## Current boundary
 
-This release includes the recovered generated-image workflow, capability-driven advanced voice workflow and persisted additive scene-transition editor/export path. It does **not** yet claim parity for every advanced legacy drawing algorithm, object-level whiteboard animation, multi-track trimming/cutting, or automatic exact-label post-processing whose source/layout contract has not yet been recovered strongly enough. Those remain subsequent parity layers rather than being hidden behind a false “finished” claim.
+This release includes the recovered generated-image workflow, capability-driven advanced voice workflow, persisted additive scene-transition editor/export path, and per-scene narration in authoritative final export. It does **not** yet claim parity for every advanced legacy drawing algorithm, object-level whiteboard animation, multi-track trimming/cutting, object-SFX semantics, or automatic exact-label post-processing whose source/layout contract has not yet been recovered strongly enough. Those remain subsequent parity layers rather than being hidden behind a false “finished” claim.

@@ -1,27 +1,30 @@
-# Nolane Studio v0.7.0
+# Nolane Studio v0.8.0
 
-Scene Transition Editor forensic-parity release.
+Scene Narration Final Export forensic-parity release.
 
 Highlights:
 
-- restores the recovered scene-transition workflow as explicit persisted project state without guessing the unrecovered legacy `clips`, `videoClips` or `audioClips` entry schemas;
-- adds an idempotent SQLite migration for `transitions_json`, preserving projects created by earlier Nolane Studio releases;
-- adds a Studio transition editor for the selected scene → following scene pair, with explicit save/clear controls, effect selection and the recovered 0.1–10 second duration bounds;
-- supports the transition effects already backed by the existing FFmpeg transition engine: fade, wipe left/right, slide left/right and smooth left/right;
-- evaluates transition adjacency against the effective persisted `mediaOrder` when that order is an exact scene permutation;
-- decodes persisted transition rows into validated `TransitionSpec` values before any scene renderer starts;
-- fails closed on malformed transition entries, unsupported effects, duplicates or non-adjacent scene pairs instead of silently dropping timeline state;
-- routes persisted transitions into final project export, where each transition remains its own normalized additive segment and never shortens or overlaps source scene duration;
-- preserves v0.6 advanced voice, v0.5 generated images, v0.4 AI Analyze, v0.3 Canvas/Object and all prior render/export authority.
+- closes the gap between Voice From Content persistence and final project export: persisted per-scene `voice_path` now reaches the authoritative rendered scene clip;
+- preflights every persisted narration source before any scene renderer starts, so stale/missing voice media cannot leave a partially rendered project export;
+- carries scene metadata into the render plan without replacing Canvas/Object or render-configuration authority;
+- adds an optional `narration_audio` surface to normalized export clips while preserving the old no-narration command path;
+- replaces synthetic silence with narration for image/static scenes;
+- mixes narration with existing source-video/normalized-scene audio rather than silently discarding either layer;
+- uses narration directly when the video source is silent;
+- resamples narration to 48 kHz, pads short narration and trims long narration to the authoritative scene duration;
+- keeps additive transitions independent: transition segments remain separate and do not steal or overlap narrated scene duration;
+- retains fail-closed boundaries for unrecovered `audioClips`, `batch_voice_segments` and object-SFX semantics;
+- adds real bundled-FFmpeg smoke coverage for narrated image normalization and narration/source-audio mixing;
+- preserves v0.7 transitions, v0.6 advanced voice, v0.5 generated images, v0.4 AI Analyze and v0.3 Canvas/Object behavior.
 
 Forensic boundary:
 
-- non-empty legacy `clips`, `videoClips` and `audioClips` per-entry schemas remain fail-closed because current recovered evidence does not establish their exact structure;
-- advanced legacy drawing algorithms, non-default hand rendering/background-removal/object-FX behavior and exact readable-label post-processing remain separate evidence-limited parity work;
-- v0.7 does not reinterpret those unknown payloads merely to make the timeline appear more complete.
+- this release does not decode legacy multi-track audio entries or batch-voice scheduling whose exact persisted schemas remain unrecovered;
+- custom object sound effects remain separate from scene narration until their routing/timing contract is recovered;
+- advanced drawing/custom paths, non-default hand/background-removal/object-FX behavior and exact readable-label post-processing remain evidence-limited.
 
 Release integrity:
 
-- v0.6.0 remains the Advanced Voice Capabilities baseline;
-- v0.7.0 is the first release containing persisted scene-transition editing through final additive export;
-- the Windows workflow tests the exact release commit, captures NUI rendered evidence, smoke-tests portable and installed executables, validates checksums and publishes versioned assets only from `main`.
+- v0.7.0 remains the Scene Transition Editor baseline;
+- v0.8.0 is the first release where persisted per-scene narration participates in final project audio composition;
+- final exact-head verification must pass the complete Linux/Windows suite, real FFmpeg narration smokes, NUI evidence, portable executable smoke, installer validation, checksums and artifact upload before merge.

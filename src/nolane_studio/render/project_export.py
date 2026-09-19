@@ -36,6 +36,10 @@ class MissingSceneMedia(FileNotFoundError):
     """Raised when a visible persisted image/video source is unavailable."""
 
 
+class MissingSceneNarration(FileNotFoundError):
+    """Raised when persisted per-scene narration cannot be read for export."""
+
+
 _UNSUPPORTED_RENDER_STATE_FIELDS = (
     "remove_background_enabled",
     "auto_object_fx_enabled",
@@ -142,6 +146,32 @@ def validate_project_scene_media(plans: Sequence[SceneRenderPlan]) -> None:
                         f"scene {plan.scene_id} object {object_id} "
                         f"unable to decode scene image: {source}"
                     )
+
+
+def persisted_scene_narration(plan: SceneRenderPlan) -> str | None:
+    """Return the persisted scene narration path, failing closed on stale state."""
+    metadata = plan.metadata
+    raw_path = metadata.get("voice_path")
+    media_id = str(metadata.get("voice_media_id") or "").strip()
+    if raw_path is None or not str(raw_path).strip():
+        if media_id:
+            raise MissingSceneNarration(
+                f"scene {plan.scene_id} persisted narration {media_id} has no voice_path"
+            )
+        return None
+
+    path = str(raw_path).strip()
+    if not Path(path).is_file():
+        raise MissingSceneNarration(
+            f"scene {plan.scene_id} missing persisted narration source: {path}"
+        )
+    return path
+
+
+def validate_project_scene_narration(plans: Sequence[SceneRenderPlan]) -> None:
+    """Preflight every persisted narration path before any scene renderer starts."""
+    for plan in plans:
+        persisted_scene_narration(plan)
 
 
 def validate_project_scene_render_state(plans: Sequence[SceneRenderPlan]) -> None:
@@ -356,6 +386,7 @@ class ProjectSceneExporter:
             raise ValueError("project has no scenes to export")
         validate_project_scene_ordering(plans)
         validate_project_scene_media(plans)
+        validate_project_scene_narration(plans)
         validate_project_scene_render_state(plans)
         validate_project_scene_composition(plans)
         timeline_state = self.store.load_timeline(project_id)
@@ -377,6 +408,7 @@ class ProjectSceneExporter:
             temp = Path(temp_raw)
             clips: list[ExportClip] = []
             for index, plan in enumerate(plans):
+                narration_audio = persisted_scene_narration(plan)
                 has_video = any(
                     str(obj.get("kind", "")).strip().lower() == "video"
                     and bool(obj.get("visible", True))
@@ -401,6 +433,7 @@ class ProjectSceneExporter:
                             trim_start=0.0,
                             trim_end=plan.total_duration,
                             clip_id=plan.scene_id,
+                            narration_audio=narration_audio,
                         )
                     )
                     continue
@@ -424,6 +457,7 @@ class ProjectSceneExporter:
                             trim_start=0.0,
                             trim_end=plan.total_duration,
                             clip_id=plan.scene_id,
+                            narration_audio=narration_audio,
                         )
                     )
                     continue
@@ -442,6 +476,7 @@ class ProjectSceneExporter:
                             "hold_duration": plan.profile.hold_duration,
                         },
                         clip_id=plan.scene_id,
+                        narration_audio=narration_audio,
                     )
                 )
 
