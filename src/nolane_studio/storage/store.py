@@ -119,6 +119,14 @@ class ProjectStore:
         return dict(metadata)
 
     @staticmethod
+    def _render_settings_mapping(settings: Mapping[str, Any] | None) -> dict[str, Any]:
+        if settings is None:
+            return {}
+        if not isinstance(settings, Mapping):
+            raise ValueError("settings must be a mapping")
+        return dict(settings)
+
+    @staticmethod
     def _stored_render_config(metadata: Mapping[str, Any]) -> dict[str, Any]:
         raw = metadata.get("render_config")
         if raw is None:
@@ -316,7 +324,7 @@ class ProjectStore:
                 scene_id=scene_id,
             )
             stored = self._stored_render_config(metadata)
-            stored.update(dict(settings or {}))
+            stored.update(self._render_settings_mapping(settings))
             stored["reveal_duration"] = row["reveal_duration"] if reveal_duration is None else reveal_duration
             stored["hold_duration"] = row["hold_duration"] if hold_duration is None else hold_duration
             normalized = normalize_render_config(stored)
