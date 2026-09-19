@@ -122,3 +122,48 @@ def test_generate_project_creates_one_stable_image_slot_per_scene(tmp_path):
         f"image-{second_id}",
     ]
     assert len(provider.requests) == 2
+
+
+def test_generated_image_does_not_hijack_manual_image_object_from_stale_metadata(tmp_path):
+    from nolane_studio.image_generation import ImageGenerationService
+
+    store, scene_id = _store(tmp_path)
+    manual = tmp_path / "manual.png"
+    manual.write_bytes(b"MANUAL")
+    manual_id = store.add_visual_object(
+        scene_id,
+        "image",
+        name="Manual image",
+        source=str(manual),
+        payload={"media_id": "manual-media", "fit": "contain"},
+    )
+    scene = store.list_scenes("p1")[0]
+    metadata = dict(scene["metadata"])
+    metadata["image_object_id"] = manual_id
+    store.update_scene(scene_id, metadata=metadata)
+
+    provider = FakeImageProvider()
+    registry = ProviderRegistry()
+    registry.register("image-test", ProviderCapabilities(image=True), lambda: provider)
+
+    artifact = ImageGenerationService(
+        store,
+        registry,
+        tmp_path / "generated",
+    ).generate_scene("p1", scene_id, provider_name="image-test")
+
+    objects = store.list_visual_objects(scene_id)
+    manual_after = next(item for item in objects if item["id"] == manual_id)
+    assert manual_after["name"] == "Manual image"
+    assert manual_after["source"] == str(manual)
+    assert manual_after["payload"] == {"media_id": "manual-media", "fit": "contain"}
+
+    generated = [
+        item
+        for item in objects
+        if item["payload"].get("generated") is True
+    ]
+    assert len(generated) == 1
+    assert generated[0]["source"] == artifact.path
+    assert generated[0]["id"] != manual_id
+    assert store.list_scenes("p1")[0]["metadata"]["image_object_id"] == generated[0]["id"]
