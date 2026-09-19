@@ -7,6 +7,7 @@ from .config import ProviderSettings
 
 from .providers import (
     OpenAICompatibleAnalysisProvider,
+    OpenAICompatibleImageProvider,
     OpenAICompatibleSTTProvider,
     OpenAICompatibleTTSProvider,
     OpenAICompatibleVisionProvider,
@@ -34,6 +35,18 @@ def build_services(settings: ProviderSettings | None = None) -> AppServices:
             lambda: OpenAICompatibleAnalysisProvider(ai_base, api_key, ai_model),
         )
 
+    image_base = os.getenv("NOLANE_STUDIO_IMAGE_BASE_URL") or settings.image_base_url
+    image_model = os.getenv("NOLANE_STUDIO_IMAGE_MODEL") or settings.image_model
+    if image_base and image_model:
+        registry.register(
+            "image-api",
+            ProviderCapabilities(image=True),
+            lambda: OpenAICompatibleImageProvider(
+                image_base,
+                api_key,
+                image_model,
+            ),
+        )
 
     vision_base = os.getenv("NOLANE_STUDIO_VISION_BASE_URL") or settings.vision_base_url
     vision_model = os.getenv("NOLANE_STUDIO_VISION_MODEL") or settings.vision_model
