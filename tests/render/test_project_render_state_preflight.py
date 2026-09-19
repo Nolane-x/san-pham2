@@ -1,0 +1,415 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from nolane_studio.domain import Scene
+from nolane_studio.render.project_export import ProjectSceneExporter, UnsupportedSceneRenderState
+from nolane_studio.storage.store import ProjectStore
+
+
+class FakeMediaExporter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, ...]] = []
+
+    def export(self, clips, output, **kwargs):
+        self.calls.append((list(clips), Path(output), kwargs))
+        Path(output).touch()
+        return Path(output)
+
+
+def test_project_exporter_preflights_later_unsupported_render_state_before_any_render(tmp_path):
+    store = ProjectStore(tmp_path / "studio.db")
+    store.initialize()
+    store.create_project("p1", "Preflight")
+    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Second")])
+    first, second = store.list_scenes("p1")
+
+    store.add_visual_object(first["id"], "shape", name="First shape", payload={"fill": "#FF0000"})
+    store.add_visual_object(second["id"], "text", name="Second text", payload={"text": "Second"})
+    store.update_scene_render_settings(
+        first["id"],
+        reveal_duration=1.0,
+        hold_duration=0.5,
+        settings={"style": "whiteboard"},
+    )
+    store.update_scene_render_settings(
+        second["id"],
+        reveal_duration=1.0,
+        hold_duration=0.5,
+        settings={"style": "color_reveal", "remove_background_enabled": True},
+    )
+
+    media = FakeMediaExporter()
+    render_calls: list[tuple[str, str]] = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).write_bytes(b"png")
+        return Path(output)
+
+    def whiteboard(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("whiteboard", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def video(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("video", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        whiteboard_renderer=whiteboard,
+        video_renderer=video,
+    )
+
+    with pytest.raises(UnsupportedSceneRenderState, match="remove_background_enabled") as exc_info:
+        exporter.export("p1", tmp_path / "never.mp4")
+
+    assert second["id"] in str(exc_info.value)
+    assert render_calls == []
+    assert media.calls == []
+
+
+def test_project_exporter_rejects_later_batch_voice_segments_before_any_render(tmp_path):
+    store = ProjectStore(tmp_path / "batch-voice-segments.db")
+    store.initialize()
+    store.create_project("p1", "Voice state preflight")
+    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Second")])
+    first, second = store.list_scenes("p1")
+
+    store.add_visual_object(
+        first["id"],
+        "shape",
+        name="First shape",
+        payload={"fill": "#FF0000"},
+    )
+    store.add_visual_object(
+        second["id"],
+        "text",
+        name="Second text",
+        payload={"text": "Second"},
+    )
+    store.update_scene_render_settings(
+        first["id"],
+        reveal_duration=1.0,
+        hold_duration=0.5,
+        settings={"style": "whiteboard"},
+    )
+    store.update_scene_render_settings(
+        second["id"],
+        reveal_duration=1.0,
+        hold_duration=0.5,
+        settings={
+            "style": "whiteboard",
+            "batch_voice_segments": [
+                {
+                    "text": "Persisted narration",
+                    "start": 0.0,
+                    "duration": 1.0,
+                }
+            ],
+        },
+    )
+
+    media = FakeMediaExporter()
+    render_calls: list[tuple[str, str]] = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).write_bytes(b"png")
+        return Path(output)
+
+    def whiteboard(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("whiteboard", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def video(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("video", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        whiteboard_renderer=whiteboard,
+        video_renderer=video,
+    )
+
+    with pytest.raises(
+        UnsupportedSceneRenderState,
+        match="batch_voice_segments",
+    ) as exc_info:
+        try:
+            exporter.export("p1", tmp_path / "never-voice-drop.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
+
+    assert second["id"] in str(exc_info.value)
+
+
+
+def test_project_exporter_rejects_later_non_whiteboard_outro_before_any_render(tmp_path):
+    store = ProjectStore(tmp_path / "non-whiteboard-outro.db")
+    store.initialize()
+    store.create_project("p1", "Outro routing preflight")
+    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Second")])
+    first, second = store.list_scenes("p1")
+
+    store.add_visual_object(
+        first["id"],
+        "shape",
+        name="First shape",
+        payload={"fill": "#FF0000"},
+    )
+    store.add_visual_object(
+        second["id"],
+        "shape",
+        name="Second shape",
+        payload={"fill": "#00AAFF"},
+    )
+    store.update_scene_render_settings(
+        first["id"],
+        reveal_duration=0.25,
+        hold_duration=0.1,
+        settings={"style": "whiteboard"},
+    )
+    store.update_scene_render_settings(
+        second["id"],
+        reveal_duration=0.25,
+        hold_duration=0.1,
+        settings={
+            "style": "color_reveal",
+            "outro_enabled": True,
+            "outro_direction": "left",
+            "outro_duration": 0.2,
+        },
+    )
+
+    media = FakeMediaExporter()
+    render_calls: list[tuple[str, str]] = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).write_bytes(b"png")
+        return Path(output)
+
+    def whiteboard(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("whiteboard", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def video(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("video", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        whiteboard_renderer=whiteboard,
+        video_renderer=video,
+    )
+
+    with pytest.raises(
+        UnsupportedSceneRenderState,
+        match="outro_enabled",
+    ) as exc_info:
+        try:
+            exporter.export("p1", tmp_path / "never-silent-outro.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
+
+    assert second["id"] in str(exc_info.value)
+
+
+
+def test_project_exporter_rejects_later_source_video_outro_before_any_render(tmp_path):
+    store = ProjectStore(tmp_path / "source-video-outro.db")
+    store.initialize()
+    store.create_project("p1", "Source video outro preflight")
+    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Second")])
+    first, second = store.list_scenes("p1")
+
+    store.add_visual_object(
+        first["id"],
+        "shape",
+        name="First shape",
+        payload={"fill": "#FF0000"},
+    )
+    source_video = tmp_path / "source.mp4"
+    source_video.touch()
+    store.add_visual_object(
+        second["id"],
+        "video",
+        name="Source video",
+        source=str(source_video),
+    )
+    store.update_scene_render_settings(
+        first["id"],
+        reveal_duration=0.25,
+        hold_duration=0.1,
+        settings={"style": "whiteboard"},
+    )
+    store.update_scene_render_settings(
+        second["id"],
+        reveal_duration=0.25,
+        hold_duration=0.1,
+        settings={
+            "style": "whiteboard",
+            "outro_enabled": True,
+            "outro_direction": "left",
+            "outro_duration": 0.2,
+        },
+    )
+
+    media = FakeMediaExporter()
+    render_calls: list[tuple[str, str]] = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).write_bytes(b"png")
+        return Path(output)
+
+    def whiteboard(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("whiteboard", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def video(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("video", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        whiteboard_renderer=whiteboard,
+        video_renderer=video,
+    )
+
+    with pytest.raises(
+        UnsupportedSceneRenderState,
+        match="outro_enabled",
+    ) as exc_info:
+        try:
+            exporter.export("p1", tmp_path / "never-source-video-outro.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
+
+    assert second["id"] in str(exc_info.value)
+
+
+
+def test_project_exporter_rejects_later_source_video_camera_motion_before_any_render(tmp_path):
+    store = ProjectStore(tmp_path / "source-video-camera.db")
+    store.initialize()
+    store.create_project("p1", "Source video camera preflight")
+    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Second")])
+    first, second = store.list_scenes("p1")
+
+    store.add_visual_object(
+        first["id"],
+        "shape",
+        name="First shape",
+        payload={"fill": "#FF0000"},
+    )
+    source_video = tmp_path / "camera-source.mp4"
+    source_video.touch()
+    store.add_visual_object(
+        second["id"],
+        "video",
+        name="Source video",
+        source=str(source_video),
+    )
+    store.update_scene_render_settings(
+        first["id"],
+        reveal_duration=0.25,
+        hold_duration=0.1,
+        settings={"style": "whiteboard"},
+    )
+    store.update_scene_render_settings(
+        second["id"],
+        reveal_duration=0.25,
+        hold_duration=0.1,
+        settings={
+            "style": "whiteboard",
+            "visual_mode": "camera_motion",
+            "custom_camera_enabled": True,
+            "custom_camera_config": [{"action": "pan_left"}],
+        },
+    )
+
+    media = FakeMediaExporter()
+    render_calls: list[tuple[str, str]] = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).write_bytes(b"png")
+        return Path(output)
+
+    def whiteboard(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("whiteboard", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def video(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("video", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        whiteboard_renderer=whiteboard,
+        video_renderer=video,
+    )
+
+    with pytest.raises(
+        UnsupportedSceneRenderState,
+        match="visual_mode",
+    ) as exc_info:
+        try:
+            exporter.export("p1", tmp_path / "never-source-video-camera.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
+
+    assert second["id"] in str(exc_info.value)

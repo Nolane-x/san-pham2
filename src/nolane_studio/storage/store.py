@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
+from ..render.config import InvalidRenderConfig, normalize_render_config
 from .schema import SCHEMA_SQL
 
 
 class ProjectStore:
+    _VISUAL_OBJECT_KINDS = {"image", "video", "text", "shape", "drawing"}
+
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
 
@@ -90,14 +94,60 @@ class ProjectStore:
         return [dict(row) for row in rows]
 
     @staticmethod
-    def _scene_payload(scene: Any) -> tuple[str, str, str, str]:
+    def _scene_metadata_mapping(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+        if metadata is None:
+            return {}
+        if not isinstance(metadata, Mapping):
+            raise ValueError("metadata must be a mapping")
+        return dict(metadata)
+
+    @classmethod
+    def _scene_payload(cls, scene: Any) -> tuple[str, str, str, str]:
         text = str(getattr(scene, "text", "")).strip()
         if not text:
             raise ValueError("scene text must not be blank")
         image_prompt = str(getattr(scene, "image_prompt", "") or "")
         voice_text = str(getattr(scene, "voice_text", "") or text)
-        metadata = getattr(scene, "metadata", {}) or {}
-        return text, image_prompt, voice_text, json.dumps(dict(metadata), ensure_ascii=False, separators=(",", ":"))
+        metadata = cls._scene_metadata_mapping(getattr(scene, "metadata", None))
+        return text, image_prompt, voice_text, json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _decode_stored_scene_metadata(value: Any, *, scene_id: str) -> dict[str, Any]:
+        metadata = json.loads(value or "{}")
+        if not isinstance(metadata, Mapping):
+            raise ValueError(f"scene {scene_id} metadata must be a mapping")
+        return dict(metadata)
+
+    @staticmethod
+    def _render_settings_mapping(settings: Mapping[str, Any] | None) -> dict[str, Any]:
+        if settings is None:
+            return {}
+        if not isinstance(settings, Mapping):
+            raise ValueError("settings must be a mapping")
+        return dict(settings)
+
+    @staticmethod
+    def _stored_render_config(metadata: Mapping[str, Any]) -> dict[str, Any]:
+        raw = metadata.get("render_config")
+        if raw is None:
+            return {}
+        if not isinstance(raw, Mapping):
+            raise InvalidRenderConfig("render_config must be a mapping")
+        return dict(raw)
+
+    @staticmethod
+    def _coerce_integer_index(value: Any, *, field: str) -> int:
+        try:
+            if isinstance(value, float):
+                if not math.isfinite(value) or not value.is_integer():
+                    raise ValueError
+                return int(value)
+            target = int(value)
+            if not isinstance(value, (int, str)) and value != target:
+                raise ValueError
+            return target
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(f"{field} must be an integer") from None
 
     @staticmethod
     def _sync_scene_count(conn: sqlite3.Connection, project_id: str) -> None:
@@ -140,7 +190,24 @@ class ProjectStore:
         result: list[dict[str, Any]] = []
         for row in rows:
             scene = dict(row)
-            scene["metadata"] = json.loads(scene.pop("metadata_json") or "{}")
+            scene_id = str(scene["id"])
+            raw_position = scene["position"]
+            if type(raw_position) is not int or raw_position < 0:
+                raise ValueError(
+                    f"scene {scene_id} position must be a non-negative integer"
+                )
+            raw_text = str(scene["text"])
+            normalized_text = raw_text.strip()
+            if not normalized_text:
+                raise ValueError(f"scene {scene_id} text must not be blank")
+            if raw_text != normalized_text:
+                raise ValueError(
+                    f"scene {scene_id} text must be stored without surrounding whitespace"
+                )
+            scene["metadata"] = self._decode_stored_scene_metadata(
+                scene.pop("metadata_json"),
+                scene_id=scene_id,
+            )
             result.append(scene)
         return result
 
@@ -166,7 +233,10 @@ class ProjectStore:
                     (project_id,),
                 ).fetchone()[0]
             )
-            target = count if position is None else int(position)
+            target = count if position is None else self._coerce_integer_index(
+                position,
+                field="position",
+            )
             if target < 0 or target > count:
                 raise ValueError(f"position must be within 0..{count}")
             conn.execute(
@@ -185,7 +255,7 @@ class ProjectStore:
                     text,
                     str(image_prompt or ""),
                     str(voice_text or text),
-                    json.dumps(dict(metadata or {}), ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(self._scene_metadata_mapping(metadata), ensure_ascii=False, separators=(",", ":")),
                 ),
             )
             self._sync_scene_count(conn, project_id)
@@ -220,7 +290,13 @@ class ProjectStore:
                 values.append(str(voice_text))
             if metadata is not None:
                 updates.append("metadata_json=?")
-                values.append(json.dumps(dict(metadata), ensure_ascii=False, separators=(",", ":")))
+                values.append(
+                    json.dumps(
+                        self._scene_metadata_mapping(metadata),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
             if not updates:
                 return
             updates.append("updated_at=CURRENT_TIMESTAMP")
@@ -231,8 +307,68 @@ class ProjectStore:
                 (row["project_id"],),
             )
 
+    def update_scene_render_settings(
+        self,
+        scene_id: str,
+        *,
+        reveal_duration: float | None = None,
+        hold_duration: float | None = None,
+        settings: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM visual_editor_scenes WHERE id=?", (scene_id,)).fetchone()
+            if row is None:
+                raise KeyError(scene_id)
+            metadata = self._decode_stored_scene_metadata(
+                row["metadata_json"],
+                scene_id=scene_id,
+            )
+            stored = self._stored_render_config(metadata)
+            stored.update(self._render_settings_mapping(settings))
+            stored["reveal_duration"] = row["reveal_duration"] if reveal_duration is None else reveal_duration
+            stored["hold_duration"] = row["hold_duration"] if hold_duration is None else hold_duration
+            normalized = normalize_render_config(stored)
+            canonical = dict(normalized)
+            extras = dict(canonical.pop("extras", {}) or {})
+            canonical.update(extras)
+            metadata["render_config"] = {
+                key: value
+                for key, value in canonical.items()
+                if key not in {"reveal_duration", "hold_duration"}
+            }
+            conn.execute(
+                """UPDATE visual_editor_scenes
+                   SET reveal_duration=?, hold_duration=?, metadata_json=?, updated_at=CURRENT_TIMESTAMP
+                   WHERE id=?""",
+                (
+                    normalized["reveal_duration"],
+                    normalized["hold_duration"],
+                    json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
+                    scene_id,
+                ),
+            )
+            conn.execute(
+                "UPDATE user_project_library SET updated_at=CURRENT_TIMESTAMP WHERE project_id=?",
+                (row["project_id"],),
+            )
+        return normalized
+
+    def get_scene_render_settings(self, scene_id: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM visual_editor_scenes WHERE id=?", (scene_id,)).fetchone()
+        if row is None:
+            raise KeyError(scene_id)
+        metadata = self._decode_stored_scene_metadata(
+            row["metadata_json"],
+            scene_id=scene_id,
+        )
+        raw = self._stored_render_config(metadata)
+        raw["reveal_duration"] = row["reveal_duration"]
+        raw["hold_duration"] = row["hold_duration"]
+        return normalize_render_config(raw)
+
     def move_scene(self, scene_id: str, new_position: int) -> None:
-        target = int(new_position)
+        target = self._coerce_integer_index(new_position, field="position")
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT project_id, position FROM visual_editor_scenes WHERE id=?",
@@ -291,6 +427,371 @@ class ProjectStore:
                 (project_id, position),
             )
             self._sync_scene_count(conn, project_id)
+
+    @staticmethod
+    def _finite_visual_number(value: Any, *, field: str) -> float:
+        try:
+            result = float(value)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(f"{field} must be finite") from None
+        if not math.isfinite(result):
+            raise ValueError(f"{field} must be finite")
+        return result
+
+    @classmethod
+    def _normalize_visual_object_values(
+        cls,
+        *,
+        kind: str,
+        width: float,
+        height: float,
+        opacity: float,
+    ) -> tuple[str, float, float, float]:
+        normalized_kind = str(kind).strip().lower()
+        if normalized_kind not in cls._VISUAL_OBJECT_KINDS:
+            allowed = ", ".join(sorted(cls._VISUAL_OBJECT_KINDS))
+            raise ValueError(f"kind must be one of: {allowed}")
+        width_value = cls._finite_visual_number(width, field="width")
+        height_value = cls._finite_visual_number(height, field="height")
+        opacity_value = cls._finite_visual_number(opacity, field="opacity")
+        if width_value <= 0:
+            raise ValueError("width must be > 0")
+        if height_value <= 0:
+            raise ValueError("height must be > 0")
+        if not 0.0 <= opacity_value <= 1.0:
+            raise ValueError("opacity must be within 0..1")
+        return normalized_kind, width_value, height_value, opacity_value
+
+    @staticmethod
+    def _visual_payload_mapping(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+        if payload is None:
+            return {}
+        if not isinstance(payload, Mapping):
+            raise ValueError("payload must be a mapping")
+        return dict(payload)
+
+    @classmethod
+    def _decode_stored_object_kind(cls, value: Any, *, object_id: str) -> Any:
+        raw = str(value)
+        canonical = raw.strip().lower()
+        if canonical in cls._VISUAL_OBJECT_KINDS and raw != canonical:
+            allowed = ", ".join(sorted(cls._VISUAL_OBJECT_KINDS))
+            raise ValueError(
+                f"visual object {object_id} kind must be stored canonically as one of: {allowed}"
+            )
+        return value
+
+
+    @staticmethod
+    def _encode_visual_object_flag(value: Any, *, field: str) -> int:
+        if type(value) is not bool:
+            raise ValueError(f"{field} must be a boolean")
+        return 1 if value else 0
+
+    @staticmethod
+    def _decode_stored_object_flag(value: Any, *, object_id: str, field: str) -> bool:
+        if type(value) is not int or value not in {0, 1}:
+            raise ValueError(
+                f"visual object {object_id} {field} must be stored as 0 or 1"
+            )
+        return bool(value)
+
+    @staticmethod
+    def _touch_project_for_scene(conn: sqlite3.Connection, scene_id: str) -> None:
+        row = conn.execute("SELECT project_id FROM visual_editor_scenes WHERE id=?", (scene_id,)).fetchone()
+        if row is None:
+            return
+        project_id = str(row["project_id"])
+        conn.execute(
+            "UPDATE user_project_library SET updated_at=CURRENT_TIMESTAMP WHERE project_id=?",
+            (project_id,),
+        )
+
+    def add_visual_object(
+        self,
+        scene_id: str,
+        kind: str,
+        *,
+        name: str = "",
+        source: str = "",
+        x: float = 0.0,
+        y: float = 0.0,
+        width: float = 320.0,
+        height: float = 180.0,
+        rotation: float = 0.0,
+        opacity: float = 1.0,
+        visible: bool = True,
+        locked: bool = False,
+        payload: Mapping[str, Any] | None = None,
+        z_index: int | None = None,
+    ) -> str:
+        normalized_kind, width_value, height_value, opacity_value = self._normalize_visual_object_values(
+            kind=kind,
+            width=width,
+            height=height,
+            opacity=opacity,
+        )
+        x_value = self._finite_visual_number(x, field="x")
+        y_value = self._finite_visual_number(y, field="y")
+        rotation_value = self._finite_visual_number(rotation, field="rotation")
+        with self._connect() as conn:
+            if conn.execute("SELECT 1 FROM visual_editor_scenes WHERE id=?", (scene_id,)).fetchone() is None:
+                raise KeyError(scene_id)
+            count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM visual_editor_objects WHERE scene_id=?",
+                    (scene_id,),
+                ).fetchone()[0]
+            )
+            target = count if z_index is None else self._coerce_integer_index(
+                z_index,
+                field="z_index",
+            )
+            if target < 0 or target > count:
+                raise ValueError(f"z_index must be within 0..{count}")
+            conn.execute(
+                "UPDATE visual_editor_objects SET z_index=z_index+1, updated_at=CURRENT_TIMESTAMP WHERE scene_id=? AND z_index>=?",
+                (scene_id, target),
+            )
+            object_id = uuid.uuid4().hex
+            conn.execute(
+                """INSERT INTO visual_editor_objects(
+                       id,scene_id,z_index,kind,name,source,x,y,width,height,rotation,
+                       opacity,visible,locked,payload_json
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    object_id,
+                    scene_id,
+                    target,
+                    normalized_kind,
+                    str(name or ""),
+                    str(source or ""),
+                    x_value,
+                    y_value,
+                    width_value,
+                    height_value,
+                    rotation_value,
+                    opacity_value,
+                    self._encode_visual_object_flag(visible, field="visible"),
+                    self._encode_visual_object_flag(locked, field="locked"),
+                    json.dumps(self._visual_payload_mapping(payload), ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+            self._touch_project_for_scene(conn, scene_id)
+            return object_id
+
+    def list_visual_objects(self, scene_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM visual_editor_objects WHERE scene_id=? ORDER BY z_index, rowid",
+                (scene_id,),
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        seen_z_visibility: dict[int, bool] = {}
+        for row in rows:
+            item = dict(row)
+            raw_object_id = str(item["id"])
+            object_id = raw_object_id.strip()
+            item["kind"] = self._decode_stored_object_kind(
+                item["kind"],
+                object_id=raw_object_id,
+            )
+            item["visible"] = self._decode_stored_object_flag(
+                item["visible"],
+                object_id=raw_object_id,
+                field="visible",
+            )
+            if not item["visible"]:
+                if not object_id:
+                    raise ValueError(
+                        f"scene {scene_id} contains hidden visual object with blank id"
+                    )
+                if raw_object_id != object_id:
+                    raise ValueError(
+                        f"scene {scene_id} contains hidden visual object "
+                        f"with noncanonical id {raw_object_id!r}"
+                    )
+                if item["kind"] not in self._VISUAL_OBJECT_KINDS:
+                    allowed = ", ".join(sorted(self._VISUAL_OBJECT_KINDS))
+                    raise ValueError(
+                        f"scene {scene_id} hidden visual object {object_id} "
+                        f"kind must be one of: {allowed}"
+                    )
+            if not item["visible"]:
+                for field in ("x", "y", "width", "height", "rotation"):
+                    try:
+                        value = float(item[field])
+                    except (TypeError, ValueError, OverflowError):
+                        raise ValueError(
+                            f"scene {scene_id} hidden visual object {object_id} "
+                            f"{field} must be finite"
+                        ) from None
+                    if not math.isfinite(value):
+                        raise ValueError(
+                            f"scene {scene_id} hidden visual object {object_id} "
+                            f"{field} must be finite"
+                        )
+
+            raw_z_index = item["z_index"]
+            if not item["visible"] and type(raw_z_index) is not int:
+                raise ValueError(
+                    f"scene {scene_id} hidden visual object {object_id} "
+                    "z_index must be a non-negative integer"
+                )
+            z_index = int(raw_z_index)
+            prior_visible = seen_z_visibility.get(z_index)
+            if prior_visible is not None and not (prior_visible and item["visible"]):
+                raise ValueError(
+                    f"scene {scene_id} visual object z_index {z_index} must be unique"
+                )
+            if prior_visible is None:
+                seen_z_visibility[z_index] = item["visible"]
+            item["locked"] = self._decode_stored_object_flag(
+                item["locked"],
+                object_id=object_id,
+                field="locked",
+            )
+            payload = json.loads(item.pop("payload_json") or "{}")
+            if not item["visible"] and not isinstance(payload, Mapping):
+                raise ValueError(
+                    f"scene {scene_id} hidden visual object {object_id} "
+                    "payload must be a mapping"
+                )
+            item["payload"] = payload
+            result.append(item)
+        return result
+
+    def update_visual_object(
+        self,
+        object_id: str,
+        *,
+        name: str | None = None,
+        source: str | None = None,
+        x: float | None = None,
+        y: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+        rotation: float | None = None,
+        opacity: float | None = None,
+        visible: bool | None = None,
+        locked: bool | None = None,
+        payload: Mapping[str, Any] | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM visual_editor_objects WHERE id=?", (object_id,)).fetchone()
+            if row is None:
+                raise KeyError(object_id)
+            _, width_value, height_value, opacity_value = self._normalize_visual_object_values(
+                kind=str(row["kind"]),
+                width=float(row["width"]) if width is None else float(width),
+                height=float(row["height"]) if height is None else float(height),
+                opacity=float(row["opacity"]) if opacity is None else float(opacity),
+            )
+            updates: list[str] = []
+            values: list[Any] = []
+            for column, value in (
+                ("name", None if name is None else str(name)),
+                ("source", None if source is None else str(source)),
+                ("x", None if x is None else self._finite_visual_number(x, field="x")),
+                ("y", None if y is None else self._finite_visual_number(y, field="y")),
+                (
+                    "rotation",
+                    None
+                    if rotation is None
+                    else self._finite_visual_number(rotation, field="rotation"),
+                ),
+            ):
+                if value is not None:
+                    updates.append(f"{column}=?")
+                    values.append(value)
+            if width is not None:
+                updates.append("width=?")
+                values.append(width_value)
+            if height is not None:
+                updates.append("height=?")
+                values.append(height_value)
+            if opacity is not None:
+                updates.append("opacity=?")
+                values.append(opacity_value)
+            if visible is not None:
+                updates.append("visible=?")
+                values.append(self._encode_visual_object_flag(visible, field="visible"))
+            if locked is not None:
+                updates.append("locked=?")
+                values.append(self._encode_visual_object_flag(locked, field="locked"))
+            if payload is not None:
+                updates.append("payload_json=?")
+                values.append(
+                    json.dumps(
+                        self._visual_payload_mapping(payload),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                )
+            if not updates:
+                return
+            updates.append("updated_at=CURRENT_TIMESTAMP")
+            values.append(object_id)
+            conn.execute(f"UPDATE visual_editor_objects SET {', '.join(updates)} WHERE id=?", values)
+            self._touch_project_for_scene(conn, str(row["scene_id"]))
+
+    def move_visual_object(self, object_id: str, new_z_index: int) -> None:
+        target = self._coerce_integer_index(new_z_index, field="z_index")
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT scene_id, z_index FROM visual_editor_objects WHERE id=?",
+                (object_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(object_id)
+            scene_id = str(row["scene_id"])
+            current = int(row["z_index"])
+            count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM visual_editor_objects WHERE scene_id=?",
+                    (scene_id,),
+                ).fetchone()[0]
+            )
+            if target < 0 or target >= count:
+                raise ValueError(f"z_index must be within 0..{max(0, count - 1)}")
+            if target == current:
+                return
+            if current < target:
+                conn.execute(
+                    """UPDATE visual_editor_objects
+                       SET z_index=z_index-1, updated_at=CURRENT_TIMESTAMP
+                       WHERE scene_id=? AND z_index>? AND z_index<=?""",
+                    (scene_id, current, target),
+                )
+            else:
+                conn.execute(
+                    """UPDATE visual_editor_objects
+                       SET z_index=z_index+1, updated_at=CURRENT_TIMESTAMP
+                       WHERE scene_id=? AND z_index>=? AND z_index<?""",
+                    (scene_id, target, current),
+                )
+            conn.execute(
+                "UPDATE visual_editor_objects SET z_index=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (target, object_id),
+            )
+            self._touch_project_for_scene(conn, scene_id)
+
+    def delete_visual_object(self, object_id: str) -> None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT scene_id, z_index FROM visual_editor_objects WHERE id=?",
+                (object_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(object_id)
+            scene_id = str(row["scene_id"])
+            z_index = int(row["z_index"])
+            conn.execute("DELETE FROM visual_editor_objects WHERE id=?", (object_id,))
+            conn.execute(
+                "UPDATE visual_editor_objects SET z_index=z_index-1, updated_at=CURRENT_TIMESTAMP WHERE scene_id=? AND z_index>?",
+                (scene_id, z_index),
+            )
+            self._touch_project_for_scene(conn, scene_id)
 
     def add_item(
         self,

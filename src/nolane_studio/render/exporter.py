@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import shutil
 import subprocess
 import tempfile
@@ -9,7 +10,12 @@ from typing import Callable, Iterable, Mapping, Sequence
 
 from nolane_studio.domain import TransitionSpec
 
-from .effects import RenderProfile, build_image_filter_graph
+from .effects import (
+    RenderProfile,
+    build_image_filter_graph,
+    normalize_ffmpeg_fps,
+    normalize_ffmpeg_render_geometry,
+)
 from .ffmpeg import SubprocessRunner
 from .timeline import build_transition_gaps
 
@@ -29,8 +35,17 @@ class ExportClip:
         kind = self.kind.strip().lower()
         if kind not in {"image", "video"}:
             raise ValueError("kind must be image or video")
+        if kind == "image" and not math.isfinite(self.duration):
+            raise ValueError("image duration must be finite")
         if kind == "image" and self.duration <= 0:
             raise ValueError("image duration must be > 0")
+        if kind == "video":
+            if not math.isfinite(self.trim_start):
+                raise ValueError("trim_start must be finite")
+            if self.trim_end is not None and not math.isfinite(self.trim_end):
+                raise ValueError("trim_end must be finite")
+            if not math.isfinite(self.speed):
+                raise ValueError("speed must be finite")
         if self.trim_start < 0:
             raise ValueError("trim_start must be >= 0")
         if self.trim_end is not None and self.trim_end <= self.trim_start:
@@ -52,21 +67,20 @@ def resolve_ffmpeg_exe() -> str:
 
 
 def _video_filter(width: int, height: int, fps: int) -> str:
-    width = max(2, int(width))
-    height = max(2, int(height))
-    if width % 2:
-        width -= 1
-    if height % 2:
-        height -= 1
+    width, height, fps = normalize_ffmpeg_render_geometry(width, height, fps)
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=white,"
-        f"fps={int(fps)},setsar=1"
+        f"fps={fps},setsar=1"
     )
 
 
 def _atempo_filter(speed: float) -> str:
     speed = float(speed)
+    if not math.isfinite(speed):
+        raise ValueError("speed must be finite")
+    if speed <= 0:
+        raise ValueError("speed must be > 0")
     factors: list[float] = []
     while speed > 2.0:
         factors.append(2.0)
@@ -89,21 +103,24 @@ def build_image_segment_command(
     fps: int = 24,
     profile: RenderProfile | None = None,
 ) -> list[str]:
-    if profile is not None:
-        duration = profile.total_duration
+    duration = float(duration)
+    if not math.isfinite(duration):
+        raise ValueError("duration must be finite")
+    if duration <= 0:
+        raise ValueError("duration must be > 0")
     cmd = [
         ffmpeg,
         "-y",
         "-loop",
         "1",
         "-t",
-        f"{float(duration):.6f}",
+        f"{duration:.6f}",
         "-i",
         source,
         "-f",
         "lavfi",
         "-t",
-        f"{float(duration):.6f}",
+        f"{duration:.6f}",
         "-i",
         "anullsrc=channel_layout=stereo:sample_rate=48000",
     ]
@@ -112,7 +129,7 @@ def build_image_segment_command(
     else:
         cmd += [
             "-filter_complex",
-            build_image_filter_graph(width, height, fps, profile),
+            build_image_filter_graph(width, height, fps, profile, total_duration=duration),
             "-map",
             "[outv]",
             "-map",
@@ -142,6 +159,10 @@ def build_video_segment_command(
 ) -> list[str]:
     trim_start = float(trim_start)
     speed = float(speed)
+    if not math.isfinite(trim_start):
+        raise ValueError("trim_start must be finite")
+    if not math.isfinite(speed):
+        raise ValueError("speed must be finite")
     if trim_start < 0:
         raise ValueError("trim_start must be >= 0")
     if speed <= 0:
@@ -151,6 +172,8 @@ def build_video_segment_command(
         cmd += ["-ss", f"{trim_start:.6f}"]
     if trim_end is not None:
         trim_end = float(trim_end)
+        if not math.isfinite(trim_end):
+            raise ValueError("trim_end must be finite")
         if trim_end <= trim_start:
             raise ValueError("trim_end must be greater than trim_start")
         cmd += ["-t", f"{trim_end - trim_start:.6f}"]
@@ -181,18 +204,20 @@ def build_transition_segment_command(
     *,
     effect: str = "fade",
     duration: float = 0.5,
+    fps: int = 24,
 ) -> list[str]:
     duration = float(duration)
     if not 0.1 <= duration <= 10.0:
         raise ValueError("transition duration must be between 0.1 and 10 seconds")
+    fps = normalize_ffmpeg_fps(fps)
     effect = str(effect).strip().lower()
     allowed = {"fade", "wipeleft", "wiperight", "slideleft", "slideright", "smoothleft", "smoothright"}
     if effect not in allowed:
         effect = "fade"
     graph = (
-        f"[0:v]trim=duration=0.050000,setpts=PTS-STARTPTS,"
+        f"[0:v]trim=duration=0.050000,setpts=PTS-STARTPTS,fps={fps},"
         f"tpad=stop_mode=clone:stop_duration={duration:.6f}[left];"
-        f"[1:v]trim=duration=0.050000,setpts=PTS-STARTPTS,"
+        f"[1:v]trim=duration=0.050000,setpts=PTS-STARTPTS,fps={fps},"
         f"tpad=stop_mode=clone:stop_duration={duration:.6f}[right];"
         f"[left][right]xfade=transition={effect}:duration={duration:.6f}:offset=0[outv]"
     )
@@ -259,10 +284,11 @@ class MediaExporter:
         clips = list(clips)
         if not clips:
             raise ValueError("at least one media clip is required")
+        normalize_ffmpeg_render_geometry(width, height, fps)
         output = Path(output)
         output.parent.mkdir(parents=True, exist_ok=True)
         clip_ids = [clip.clip_id or str(index) for index, clip in enumerate(clips)]
-        build_transition_gaps(clip_ids, transitions)  # validates adjacency/duplicates
+        build_transition_gaps(clip_ids, transitions)
         transition_lookup = {(t.from_id, t.to_id): t for t in transitions}
 
         with tempfile.TemporaryDirectory(prefix="nolane-studio-export-") as temp_raw:
@@ -303,6 +329,7 @@ class MediaExporter:
                         str(trans_segment),
                         effect=transition.effect,
                         duration=transition.duration,
+                        fps=fps,
                     )
                 )
                 assembly.append(trans_segment)

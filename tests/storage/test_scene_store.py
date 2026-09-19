@@ -1,3 +1,5 @@
+import pytest
+
 from nolane_studio.domain import Scene
 from nolane_studio.storage.store import ProjectStore
 
@@ -65,3 +67,65 @@ def test_scene_crud_rejects_cross_project_or_invalid_positions(tmp_path):
         assert "position" in str(exc)
     else:
         raise AssertionError("out-of-range move was accepted")
+
+def test_add_scene_rejects_fractional_position(tmp_path):
+    store = _store(tmp_path)
+    store.replace_scenes("p1", [Scene(0, "One")])
+
+    with pytest.raises(ValueError, match=r"^position must be an integer$"):
+        store.add_scene("p1", "Fractional", position=0.5)
+
+
+def test_move_scene_rejects_fractional_position(tmp_path):
+    store = _store(tmp_path)
+    store.replace_scenes("p1", [Scene(0, "One"), Scene(1, "Two")])
+    second = store.list_scenes("p1")[1]
+
+    with pytest.raises(ValueError, match=r"^position must be an integer$"):
+        store.move_scene(second["id"], 0.5)
+
+
+def test_add_visual_object_rejects_fractional_z_index(tmp_path):
+    store = _store(tmp_path)
+    store.replace_scenes("p1", [Scene(0, "One")])
+    scene_id = store.list_scenes("p1")[0]["id"]
+    store.add_visual_object(scene_id, "shape", name="Back")
+
+    with pytest.raises(ValueError, match=r"^z_index must be an integer$"):
+        store.add_visual_object(scene_id, "shape", name="Fractional", z_index=0.5)
+
+
+def test_move_visual_object_rejects_fractional_z_index(tmp_path):
+    store = _store(tmp_path)
+    store.replace_scenes("p1", [Scene(0, "One")])
+    scene_id = store.list_scenes("p1")[0]["id"]
+    store.add_visual_object(scene_id, "shape", name="Back")
+    front = store.add_visual_object(scene_id, "shape", name="Front")
+
+    with pytest.raises(ValueError, match=r"^z_index must be an integer$"):
+        store.move_visual_object(front, 0.5)
+
+@pytest.mark.parametrize("metadata", [[], [["tag", "demo"]]])
+def test_replace_scenes_rejects_non_mapping_metadata(tmp_path, metadata):
+    store = _store(tmp_path)
+
+    with pytest.raises(ValueError, match=r"^metadata must be a mapping$"):
+        store.replace_scenes("p1", [Scene(0, "Opening", metadata=metadata)])
+
+
+@pytest.mark.parametrize("metadata", [[], [["tag", "demo"]]])
+def test_add_scene_rejects_non_mapping_metadata(tmp_path, metadata):
+    store = _store(tmp_path)
+
+    with pytest.raises(ValueError, match=r"^metadata must be a mapping$"):
+        store.add_scene("p1", "Opening", metadata=metadata)
+
+
+@pytest.mark.parametrize("metadata", [[], [["tag", "demo"]]])
+def test_update_scene_rejects_non_mapping_metadata(tmp_path, metadata):
+    store = _store(tmp_path)
+    scene_id = store.add_scene("p1", "Opening")
+
+    with pytest.raises(ValueError, match=r"^metadata must be a mapping$"):
+        store.update_scene(scene_id, metadata=metadata)
+
