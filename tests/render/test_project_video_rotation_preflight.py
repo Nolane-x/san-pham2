@@ -93,13 +93,17 @@ def test_project_exporter_preflights_later_nonfinite_video_rotation_before_any_r
 
     source = tmp_path / "second-video.mp4"
     source.touch()
-    store.add_visual_object(
+    second_object_id = store.add_visual_object(
         second["id"],
         "video",
         name="Second video",
         source=str(source),
-        rotation=float("inf"),
     )
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_objects SET rotation=? WHERE id=?",
+            (float("inf"), second_object_id),
+        )
     store.update_scene_render_settings(
         second["id"],
         reveal_duration=0.0,
