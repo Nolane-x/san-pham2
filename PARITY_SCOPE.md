@@ -1,27 +1,29 @@
-# Forensic parity scope — v0.11.0
+# Forensic parity scope — v0.13.0
 
 This branch continues the clean source rebuild of the user's legacy Windows creator application. The recovered EXE and recovered design evidence remain behavioral authorities: useful creator workflows and state contracts are restored while legacy branding, trade dress, licensing, account, telemetry, updater and heavyweight-runtime coupling remain outside the creator path.
 
-## Authority of this parity slice
+## Authority recovered through v0.13
 
-- Recovered AI behavior explicitly states that exact readable labels are overlaid deterministically after image generation rather than delegated to the image model.
-- The existing hardened whiteboard prompt already tells image providers not to render long text and to leave readable labels to deterministic post-processing.
-- AI Analyze already persists grounded objects with exact `label` text, exact spoken `phrase`, normalized `box` coordinates and timing. v0.11 uses only the unambiguous `label + box` subset for visual label materialization.
-- Each requested label becomes a normal persisted Canvas `text` object. Existing Canvas and final-render paths therefore remain authoritative; no second hidden raster pipeline is introduced.
-- Normalized boxes map directly onto the 1280×720 recovered reference canvas. The text itself is exact; typography is a neutral rebuild default.
-- Label synchronization is idempotent by analysis slot, preserves user-created text and every non-owned layer, and deletes only stale objects marked with the v0.11 Nolane readable-label owner contract.
-- The whole requested label set is validated before label mutation. Non-mapping analysis state, blank labels, malformed/non-finite/out-of-range boxes and non-positive-area boxes fail closed.
-- AI Analyze materializes labels after the visual exists; cache hits for the same generated image resynchronize idempotently.
-- A provider call that produces a new generated image invalidates prior `ai_analysis` grounding and service-owned readable labels because normalized boxes are derived from the previous image bytes. Failed generation leaves the prior derived state untouched.
-- Non-whiteboard visual styles are outside this automatic overlay slice and are left unchanged.
-- Existing v0.3 Canvas/Object through v0.10 Scene Clip Edit authority remains unchanged.
+- v0.3 established durable Canvas/object state used by the visual editor and authoritative render pipeline.
+- v0.4 restored API-first AI Analyze plus per-scene Voice From Content contracts.
+- v0.5 restored the optional generated-image workflow with hardened prompts, durable scene-owned media and deterministic cache identity.
+- v0.6 expanded voice support through provider capabilities rather than vendor/runtime coupling.
+- v0.7 restored persisted additive scene transitions: transition duration is added and never steals source-scene duration.
+- v0.8 bound persisted per-scene narration into authoritative final export, including source-video audio mixing and scene-duration normalization.
+- v0.9 exposed recovered per-object whiteboard pause/draw/push timing and preserves object timing across scene duplication by remapping copied object IDs.
+- v0.10 introduced the explicit rebuild-owned `sceneEdits` contract for scene trim-start, trim-end and speed; the same window applies to visuals and narration.
+- v0.11 materializes exact AI Analyze grounded labels as persisted Canvas text objects using recovered normalized box placement, while deliberately using neutral rebuild typography where source-exact styling is not evidenced.
+- v0.12 restores the Studio Preview control as a real selected-scene render through the authoritative Canvas/video/whiteboard pipeline, with narration and `sceneEdits`, but without project transitions/order.
+- v0.13 keeps supported timeline state coherent across scene Add/Duplicate/Move/Delete. Scene lifecycle changes rewrite `mediaOrder` to authoritative current scene order, retain only still-adjacent transitions, prune deleted-scene edits, clone a duplicated scene's `sceneEdits` entry, and fail closed before mutation when opaque legacy track buckets are non-empty.
 
 ## Evidence-limited boundaries
 
-- v0.11 does not claim source-exact legacy font family, text decoration, callout shapes, collision avoidance or any unrecovered label-layout nuance beyond grounded-box placement.
-- Arbitrary custom draw paths and source-exact non-default hand rendering remain separate parity work.
-- Background-removal behavior and object effect/sound routing remain evidence-limited.
-- Arbitrary legacy multi-track clip splitting/cutting and non-empty `clips`, `videoClips`, `audioClips` and `batch_voice_segments` entry schemas remain fail-closed.
+- Arbitrary custom draw-path semantics remain unrecovered beyond persisted Canvas drawing objects and the supported whiteboard reveal/timing pipeline.
+- Source-exact non-default hand rendering and background-removal behavior remain separate parity work.
+- Object effect/SFX configuration names are recovered, and final composition is known to support object SFX conceptually, but exact routing/config semantics remain evidence-limited.
+- Source-exact legacy label font family, decoration, callout shapes, collision avoidance and other layout nuance beyond grounded-box placement remain unrecovered.
+- Arbitrary legacy multi-track clip splitting/cutting and non-empty `clips`, `videoClips`, `audioClips` and `batch_voice_segments` entry schemas remain fail-closed. The generic rebuild `TimelineClip/split_clip` helper is not treated as proof of the legacy persisted schema.
+- New parity work must distinguish recovered evidence from rebuild-owned contracts and must not claim source parity merely because a plausible implementation exists.
 
 ## Product constraints retained
 
@@ -29,4 +31,5 @@ This branch continues the clean source rebuild of the user's legacy Windows crea
 - No FREE/PRO feature naming, paywall, license verification, mandatory login, or mandatory account gate.
 - No mandatory Ollama, OmniVoice, ComfyUI, local LLM, local speech model, local image model, OCR dependency or model-weight download merely to open/use the editor.
 - API keys are not persisted in `settings.json`.
-- Subsequent parity work must be supported by recovered evidence or be labeled explicitly as new product design.
+- SQLite remains authoritative local project state and FFmpeg remains the authoritative supported media composition layer.
+- Unsupported recovered state must fail closed rather than be silently discarded or guessed.
