@@ -10,6 +10,11 @@ from typing import Any
 from .ai.prompts import build_image_prompt
 from .domain import ImageRequest, Scene
 from .providers.registry import ProviderRegistry
+from .readable_labels import (
+    sync_readable_label_objects,
+    validate_readable_label_metadata,
+    validate_readable_label_object_state,
+)
 from .storage.store import ProjectStore
 
 
@@ -187,11 +192,13 @@ class ImageGenerationService:
         output_dir = self.workspace_root / "images" / project_id
         path = output_dir / f"{scene_id}.png"
         metadata = dict(scene.get("metadata") or {})
+        validate_readable_label_object_state(self.store, scene_id)
         existing_media = {
             item["id"]: item for item in self.store.list_media(project_id)
         }
 
         if metadata.get("image_cache_key") == cache_key and path.is_file():
+            validate_readable_label_metadata(metadata)
             if media_id not in existing_media:
                 self.store.add_media(
                     project_id,
@@ -209,6 +216,7 @@ class ImageGenerationService:
             if metadata.get("image_object_id") != object_id:
                 metadata["image_object_id"] = object_id
                 self.store.update_scene(scene_id, metadata=metadata)
+            sync_readable_label_objects(self.store, scene_id, metadata)
             return ImageArtifact(scene_id=scene_id, media_id=media_id, path=str(path))
 
         provider = self.providers.get(provider_name)
@@ -236,6 +244,10 @@ class ImageGenerationService:
             path=path,
             metadata=metadata,
         )
+        # Grounding is derived from image bytes. A newly generated image can
+        # move or replace the grounded objects, so old analysis/label boxes are
+        # stale and must not be projected onto the new composition.
+        metadata.pop("ai_analysis", None)
         metadata.update(
             {
                 "visual_media_id": media_id,
@@ -248,6 +260,7 @@ class ImageGenerationService:
             }
         )
         self.store.update_scene(scene_id, metadata=metadata)
+        sync_readable_label_objects(self.store, scene_id, metadata)
         return ImageArtifact(scene_id=scene_id, media_id=media_id, path=str(path))
 
     def generate_project(

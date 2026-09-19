@@ -19,6 +19,11 @@ from PySide6.QtWidgets import (
 from ..ai.object_voice import ObjectVoiceAnalyzer, merge_analysis_metadata
 from ..image_generation import ImageGenerationService
 from ..providers.registry import ProviderRegistry
+from ..readable_labels import (
+    sync_readable_label_objects,
+    validate_readable_label_metadata,
+    validate_readable_label_object_state,
+)
 from ..render.project_export import (
     ProjectSceneExporter,
     UnsupportedProjectTimeline,
@@ -970,7 +975,10 @@ class StudioPage(_BaseStudioPage):
             scene.get("metadata"),
             result.to_metadata(),
         )
+        validate_readable_label_metadata(metadata)
+        validate_readable_label_object_state(self.store, scene_id)
         self.store.update_scene(scene_id, metadata=metadata)
+        sync_readable_label_objects(self.store, scene_id, metadata)
         return result
 
     def _analyze_selected_scene(self) -> None:
