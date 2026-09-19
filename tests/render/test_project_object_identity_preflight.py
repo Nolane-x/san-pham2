@@ -134,3 +134,111 @@ def test_project_exporter_rejects_later_blank_object_id_before_any_render(tmp_pa
         finally:
             assert render_calls == []
             assert media.calls == []
+
+
+
+def test_composition_preflight_rejects_visible_object_id_with_surrounding_whitespace():
+    plan = _plan_with_blank_id()
+    obj = dict(plan.objects[0])
+    obj["id"] = "  object-1  "
+    plan = SceneRenderPlan(
+        scene_id="scene-noncanonical-object-id",
+        position=0,
+        text=plan.text,
+        objects=(obj,),
+        profile=plan.profile,
+        object_timing=plan.object_timing,
+        total_duration=plan.total_duration,
+        media_sources=plan.media_sources,
+        render_config=plan.render_config,
+    )
+
+    with pytest.raises(
+        CompositionError,
+        match=(
+            r"^scene scene-noncanonical-object-id contains visible object "
+            r"with noncanonical id '  object-1  '$"
+        ),
+    ):
+        validate_project_scene_composition([plan])
+
+
+def test_project_exporter_rejects_later_object_id_with_surrounding_whitespace_before_any_render(
+    tmp_path,
+):
+    store = ProjectStore(tmp_path / "noncanonical-object-id.db")
+    store.initialize()
+    store.create_project("p1", "Canonical object identity preflight")
+    store.replace_scenes("p1", [Scene(0, "First"), Scene(1, "Second")])
+    first, second = store.list_scenes("p1")
+
+    store.add_visual_object(
+        first["id"],
+        "shape",
+        name="First shape",
+        payload={"fill": "#FF0000"},
+    )
+    second_object_id = store.add_visual_object(
+        second["id"],
+        "shape",
+        name="Noncanonical identity",
+        payload={"fill": "#00AAFF"},
+    )
+    for scene in (first, second):
+        store.update_scene_render_settings(
+            scene["id"],
+            reveal_duration=0.0,
+            hold_duration=1.0,
+            settings={"style": "whiteboard"},
+        )
+
+    corrupt_id = f"  {second_object_id}  "
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_objects SET id=? WHERE id=?",
+            (corrupt_id, second_object_id),
+        )
+
+    media = FakeMediaExporter()
+    render_calls: list[tuple[str, str]] = []
+
+    def snapshot(plan, output):
+        render_calls.append(("snapshot", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def video(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("video", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    def whiteboard(plan, output, **kwargs):
+        del kwargs
+        render_calls.append(("whiteboard", plan.scene_id))
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).touch()
+        return Path(output)
+
+    exporter = ProjectSceneExporter(
+        store,
+        media_exporter=media,
+        snapshot_renderer=snapshot,
+        video_renderer=video,
+        whiteboard_renderer=whiteboard,
+    )
+
+    with pytest.raises(
+        CompositionError,
+        match=(
+            rf"^scene {second['id']} contains visible object "
+            rf"with noncanonical id '  {second_object_id}  '$"
+        ),
+    ):
+        try:
+            exporter.export("p1", tmp_path / "never-noncanonical-object-id.mp4")
+        finally:
+            assert render_calls == []
+            assert media.calls == []
