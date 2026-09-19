@@ -4,7 +4,17 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QWidget,
+)
 
 from ..ai.object_voice import ObjectVoiceAnalyzer, merge_analysis_metadata
 from ..image_generation import ImageGenerationService
@@ -120,18 +130,76 @@ class StudioPage(_BaseStudioPage):
         save_index = self.inspector_layout.indexOf(self.save_scene_button)
         self.inspector_layout.insertLayout(save_index + 1, voice_actions)
 
+        self.voice_options_surface = Surface()
+        voice_grid = QGridLayout(self.voice_options_surface)
+        voice_grid.setContentsMargins(12, 12, 12, 12)
+        voice_grid.setHorizontalSpacing(10)
+        voice_grid.setVerticalSpacing(8)
+
+        voice_grid.addWidget(QLabel("Language"), 0, 0)
+        self.voice_language_edit = QLineEdit("vi-VN")
+        self.voice_language_edit.setPlaceholderText("vi-VN")
+        voice_grid.addWidget(self.voice_language_edit, 0, 1, 1, 2)
+
+        voice_grid.addWidget(QLabel("Voice"), 1, 0)
+        self.voice_name_combo = QComboBox()
+        self.voice_name_combo.setEditable(True)
+        self.voice_name_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.voice_name_combo.setPlaceholderText("Provider default")
+        voice_grid.addWidget(self.voice_name_combo, 1, 1)
+        self.load_voice_catalog_button = QPushButton("Load voices")
+        self.load_voice_catalog_button.setObjectName("ghost")
+        self.load_voice_catalog_button.clicked.connect(self._load_voice_catalog)
+        voice_grid.addWidget(self.load_voice_catalog_button, 1, 2)
+
+        voice_grid.addWidget(QLabel("Speed"), 2, 0)
+        self.voice_speed_spin = QDoubleSpinBox()
+        self.voice_speed_spin.setRange(0.25, 4.0)
+        self.voice_speed_spin.setSingleStep(0.05)
+        self.voice_speed_spin.setDecimals(2)
+        self.voice_speed_spin.setValue(1.0)
+        voice_grid.addWidget(self.voice_speed_spin, 2, 1, 1, 2)
+
+        self.voice_reference_audio_label = QLabel("Reference audio")
+        voice_grid.addWidget(self.voice_reference_audio_label, 3, 0)
+        self.voice_reference_audio_edit = QLineEdit()
+        self.voice_reference_audio_edit.setPlaceholderText("Optional voice-cloning reference")
+        voice_grid.addWidget(self.voice_reference_audio_edit, 3, 1)
+        self.voice_reference_audio_button = QPushButton("Browse")
+        self.voice_reference_audio_button.setObjectName("ghost")
+        self.voice_reference_audio_button.clicked.connect(self._browse_voice_reference_audio)
+        voice_grid.addWidget(self.voice_reference_audio_button, 3, 2)
+
+        self.voice_reference_text_label = QLabel("Reference text")
+        voice_grid.addWidget(self.voice_reference_text_label, 4, 0)
+        self.voice_reference_text_edit = QLineEdit()
+        self.voice_reference_text_edit.setPlaceholderText("Optional transcript for the reference")
+        voice_grid.addWidget(self.voice_reference_text_edit, 4, 1, 1, 2)
+
+        self.voice_design_label = QLabel("Voice design")
+        voice_grid.addWidget(self.voice_design_label, 5, 0)
+        self.voice_design_edit = QLineEdit()
+        self.voice_design_edit.setPlaceholderText("e.g. warm educational narrator")
+        voice_grid.addWidget(self.voice_design_edit, 5, 1, 1, 2)
+
+        self.inspector_layout.insertWidget(save_index + 2, self.voice_options_surface)
+        self._sync_voice_capability_controls()
+
     def _start_task(
         self,
         task: Callable[[], object],
         *,
         started: str,
         success: Callable[[object], str],
+        on_result: Callable[[object], None] | None = None,
     ) -> None:
         self.status_message.emit(started)
         worker = TaskWorker(task, self)
         self._task_workers.append(worker)
 
         def done(result: object) -> None:
+            if on_result is not None:
+                on_result(result)
             self.status_message.emit(success(result))
             self._refresh_media()
             scene_id = self._selected_scene_id()
@@ -299,6 +367,85 @@ class StudioPage(_BaseStudioPage):
             ),
         )
 
+    def _voice_descriptor(self):
+        matches = self.providers.find(tts=True)
+        return matches[0] if matches else None
+
+    def _sync_voice_capability_controls(self) -> None:
+        descriptor = self._voice_descriptor()
+        capabilities = descriptor.capabilities if descriptor is not None else None
+        clone_enabled = bool(capabilities and capabilities.clone)
+        design_enabled = bool(capabilities and capabilities.design)
+        catalog_enabled = bool(capabilities and capabilities.list_voices)
+
+        for widget in (
+            self.voice_reference_audio_label,
+            self.voice_reference_audio_edit,
+            self.voice_reference_audio_button,
+            self.voice_reference_text_label,
+            self.voice_reference_text_edit,
+        ):
+            widget.setHidden(not clone_enabled)
+        for widget in (self.voice_design_label, self.voice_design_edit):
+            widget.setHidden(not design_enabled)
+        self.load_voice_catalog_button.setHidden(not catalog_enabled)
+
+    @staticmethod
+    def _optional_voice_text(value: str) -> str | None:
+        normalized = str(value).strip()
+        return normalized or None
+
+    def _voice_generation_options(self) -> dict[str, object]:
+        return {
+            "language": self.voice_language_edit.text().strip() or "vi-VN",
+            "voice": self._optional_voice_text(self.voice_name_combo.currentText()),
+            "speed": float(self.voice_speed_spin.value()),
+            "reference_audio": self._optional_voice_text(
+                self.voice_reference_audio_edit.text()
+            ),
+            "reference_text": self._optional_voice_text(
+                self.voice_reference_text_edit.text()
+            ),
+            "design_instructions": self._optional_voice_text(
+                self.voice_design_edit.text()
+            ),
+        }
+
+    def _browse_voice_reference_audio(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select reference voice audio",
+            "",
+            "Audio (*.wav *.mp3 *.m4a *.flac *.ogg);;All files (*)",
+        )
+        if path:
+            self.voice_reference_audio_edit.setText(path)
+
+    def _apply_voice_catalog(self, result: object) -> None:
+        voices = [str(item).strip() for item in list(result) if str(item).strip()]
+        current = self.voice_name_combo.currentText().strip()
+        self.voice_name_combo.clear()
+        self.voice_name_combo.addItems(voices)
+        if current:
+            self.voice_name_combo.setEditText(current)
+
+    def _load_voice_catalog(self) -> None:
+        descriptor = self._voice_descriptor()
+        if descriptor is None:
+            self.status_message.emit("No TTS provider configured. Open Providers first.")
+            return
+        if not descriptor.capabilities.list_voices:
+            self.status_message.emit("Selected voice provider does not expose a voice catalog")
+            return
+        service = self._voice_service()
+        provider_name = descriptor.name
+        self._start_task(
+            lambda: service.list_voices(provider_name),
+            started="Loading provider voice catalog…",
+            success=lambda voices: f"Loaded {len(voices)} voice(s)",
+            on_result=self._apply_voice_catalog,
+        )
+
     def _voice_service(self) -> VoiceFromContentService:
         return VoiceFromContentService(
             self.store,
@@ -321,11 +468,13 @@ class StudioPage(_BaseStudioPage):
             return
         project_id = self.project_id
         service = self._voice_service()
+        voice_options = self._voice_generation_options()
         self._start_task(
             lambda: service.synthesize_scene(
                 project_id,
                 scene_id,
                 provider_name=provider_name,
+                **voice_options,
             ),
             started="Generating selected scene voice…",
             success=lambda artifact: f"Voice ready · {Path(artifact.path).name}",
@@ -342,10 +491,12 @@ class StudioPage(_BaseStudioPage):
             return
         project_id = self.project_id
         service = self._voice_service()
+        voice_options = self._voice_generation_options()
         self._start_task(
             lambda: service.synthesize_project(
                 project_id,
                 provider_name=provider_name,
+                **voice_options,
             ),
             started="Voice From Content · generating project narration…",
             success=lambda artifacts: (
