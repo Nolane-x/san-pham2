@@ -30,6 +30,7 @@ class ExportClip:
     speed: float = 1.0
     render_profile: Mapping[str, object] | None = None
     clip_id: str = ""
+    narration_audio: str | None = None
 
     def __post_init__(self) -> None:
         kind = self.kind.strip().lower()
@@ -52,8 +53,17 @@ class ExportClip:
             raise ValueError("trim_end must be greater than trim_start")
         if self.speed <= 0:
             raise ValueError("speed must be > 0")
+        narration = None if self.narration_audio is None else str(self.narration_audio).strip()
+        if narration == "":
+            narration = None
+        if narration is not None:
+            if not math.isfinite(self.duration):
+                raise ValueError("narrated clip duration must be finite")
+            if self.duration <= 0:
+                raise ValueError("narrated clip duration must be > 0")
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "clip_id", str(self.clip_id).strip())
+        object.__setattr__(self, "narration_audio", narration)
 
 
 def resolve_ffmpeg_exe() -> str:
@@ -102,12 +112,17 @@ def build_image_segment_command(
     height: int = 720,
     fps: int = 24,
     profile: RenderProfile | None = None,
+    narration_audio: str | None = None,
 ) -> list[str]:
     duration = float(duration)
     if not math.isfinite(duration):
         raise ValueError("duration must be finite")
     if duration <= 0:
         raise ValueError("duration must be > 0")
+    narration = None if narration_audio is None else str(narration_audio).strip()
+    if narration == "":
+        narration = None
+
     cmd = [
         ffmpeg,
         "-y",
@@ -117,24 +132,57 @@ def build_image_segment_command(
         f"{duration:.6f}",
         "-i",
         source,
-        "-f",
-        "lavfi",
-        "-t",
-        f"{duration:.6f}",
-        "-i",
-        "anullsrc=channel_layout=stereo:sample_rate=48000",
     ]
-    if profile is None:
-        cmd += ["-map", "0:v:0", "-map", "1:a:0", "-vf", _video_filter(width, height, fps)]
-    else:
+    if narration is None:
         cmd += [
-            "-filter_complex",
-            build_image_filter_graph(width, height, fps, profile, total_duration=duration),
-            "-map",
-            "[outv]",
-            "-map",
-            "1:a:0",
+            "-f",
+            "lavfi",
+            "-t",
+            f"{duration:.6f}",
+            "-i",
+            "anullsrc=channel_layout=stereo:sample_rate=48000",
         ]
+        if profile is None:
+            cmd += ["-map", "0:v:0", "-map", "1:a:0", "-vf", _video_filter(width, height, fps)]
+        else:
+            cmd += [
+                "-filter_complex",
+                build_image_filter_graph(width, height, fps, profile, total_duration=duration),
+                "-map",
+                "[outv]",
+                "-map",
+                "1:a:0",
+            ]
+    else:
+        cmd += ["-i", narration]
+        narration_graph = (
+            f"[1:a]aresample=48000,apad,atrim=duration={duration:.6f}[narration]"
+        )
+        if profile is None:
+            cmd += [
+                "-filter_complex",
+                narration_graph,
+                "-map",
+                "0:v:0",
+                "-map",
+                "[narration]",
+                "-vf",
+                _video_filter(width, height, fps),
+            ]
+        else:
+            graph = (
+                build_image_filter_graph(width, height, fps, profile, total_duration=duration)
+                + ";"
+                + narration_graph
+            )
+            cmd += [
+                "-filter_complex",
+                graph,
+                "-map",
+                "[outv]",
+                "-map",
+                "[narration]",
+            ]
     cmd += [
         "-c:v", "libx264", "-preset", "veryfast", "-threads", "1", "-crf", "20",
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
@@ -156,6 +204,8 @@ def build_video_segment_command(
     trim_start: float = 0.0,
     trim_end: float | None = None,
     speed: float = 1.0,
+    duration: float | None = None,
+    narration_audio: str | None = None,
 ) -> list[str]:
     trim_start = float(trim_start)
     speed = float(speed)
@@ -167,6 +217,20 @@ def build_video_segment_command(
         raise ValueError("trim_start must be >= 0")
     if speed <= 0:
         raise ValueError("speed must be > 0")
+
+    narration = None if narration_audio is None else str(narration_audio).strip()
+    if narration == "":
+        narration = None
+    narration_duration: float | None = None
+    if narration is not None:
+        if duration is None:
+            raise ValueError("duration is required when narration_audio is set")
+        narration_duration = float(duration)
+        if not math.isfinite(narration_duration):
+            raise ValueError("duration must be finite")
+        if narration_duration <= 0:
+            raise ValueError("duration must be > 0")
+
     cmd = [ffmpeg, "-y"]
     if trim_start:
         cmd += ["-ss", f"{trim_start:.6f}"]
@@ -178,15 +242,59 @@ def build_video_segment_command(
             raise ValueError("trim_end must be greater than trim_start")
         cmd += ["-t", f"{trim_end - trim_start:.6f}"]
     cmd += ["-i", source]
-    if not has_audio:
+
+    if narration is not None:
+        cmd += ["-i", narration]
+    elif not has_audio:
         cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
-    cmd += ["-map", "0:v:0", "-map", "0:a:0?" if has_audio else "1:a:0"]
+
+    cmd += ["-map", "0:v:0"]
     video_filter = _video_filter(width, height, fps)
     if speed != 1.0:
         video_filter += f",setpts=PTS/{speed:.6f}"
-    cmd += ["-vf", video_filter]
-    if has_audio and speed != 1.0:
-        cmd += ["-af", _atempo_filter(speed)]
+
+    if narration is None:
+        cmd += ["-map", "0:a:0?" if has_audio else "1:a:0", "-vf", video_filter]
+        if has_audio and speed != 1.0:
+            cmd += ["-af", _atempo_filter(speed)]
+    else:
+        assert narration_duration is not None
+        narration_chain = (
+            f"[1:a]aresample=48000,apad,"
+            f"atrim=duration={narration_duration:.6f}[narration]"
+        )
+        if has_audio:
+            source_filters: list[str] = []
+            if speed != 1.0:
+                source_filters.append(_atempo_filter(speed))
+            source_filters.extend(
+                [
+                    "aresample=48000",
+                    "apad",
+                    f"atrim=duration={narration_duration:.6f}",
+                ]
+            )
+            source_chain = f"[0:a]{','.join(source_filters)}[sourcea]"
+            mix_chain = (
+                f"[sourcea][narration]amix=inputs=2:duration=longest:"
+                f"dropout_transition=0,atrim=duration={narration_duration:.6f}[mixeda]"
+            )
+            audio_graph = ";".join((source_chain, narration_chain, mix_chain))
+            audio_map = "[mixeda]"
+        else:
+            audio_graph = narration_chain
+            audio_map = "[narration]"
+        cmd += [
+            "-filter_complex",
+            audio_graph,
+            "-map",
+            audio_map,
+            "-vf",
+            video_filter,
+            "-t",
+            f"{narration_duration:.6f}",
+        ]
+
     cmd += [
         "-c:v", "libx264", "-preset", "veryfast", "-threads", "1", "-crf", "20",
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.1",
@@ -301,12 +409,15 @@ class MediaExporter:
                     command = build_image_segment_command(
                         self.ffmpeg, clip.path, str(segment), duration=clip.duration,
                         width=width, height=height, fps=fps, profile=profile,
+                        narration_audio=clip.narration_audio,
                     )
                 else:
                     command = build_video_segment_command(
                         self.ffmpeg, clip.path, str(segment),
                         has_audio=self.audio_probe(clip.path), width=width, height=height, fps=fps,
                         trim_start=clip.trim_start, trim_end=clip.trim_end, speed=clip.speed,
+                        duration=clip.duration if clip.narration_audio else None,
+                        narration_audio=clip.narration_audio,
                     )
                 self.runner.run(command)
                 normalized.append(segment)
