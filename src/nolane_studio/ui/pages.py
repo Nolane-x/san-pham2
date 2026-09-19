@@ -25,6 +25,7 @@ from ..readable_labels import (
     validate_readable_label_metadata,
     validate_readable_label_object_state,
 )
+from ..render.editing import TimelineClip, split_clip
 from ..render.project_export import (
     ProjectSceneExporter,
     UnsupportedProjectTimeline,
@@ -285,6 +286,26 @@ class StudioPage(_BaseStudioPage):
         scene_edit_grid.addWidget(self.scene_edit_save_button, 1, 6)
         scene_edit_grid.addWidget(self.scene_edit_reset_button, 1, 7)
 
+        self.scene_split_at_spin = QDoubleSpinBox()
+        self.scene_split_at_spin.setRange(0.001, 1_000_000.0)
+        self.scene_split_at_spin.setDecimals(3)
+        self.scene_split_at_spin.setSingleStep(0.1)
+        self.scene_split_at_spin.setSuffix(" s clip")
+        self.scene_split_at_spin.setToolTip(
+            "Split at effective playback time after trim and speed"
+        )
+        self.scene_split_button = QPushButton("Split clip")
+        self.scene_split_button.setToolTip(
+            "Duplicate the selected scene into two contiguous sceneEdits windows"
+        )
+        self.scene_split_button.clicked.connect(self._split_selected_scene)
+        scene_edit_grid.addWidget(QLabel("Split at"), 2, 0)
+        scene_edit_grid.addWidget(self.scene_split_at_spin, 2, 1)
+        scene_edit_grid.addWidget(self.scene_split_button, 2, 2, 1, 2)
+        split_hint = QLabel("effective time · no transition is inserted between halves")
+        split_hint.setObjectName("muted")
+        scene_edit_grid.addWidget(split_hint, 2, 4, 1, 4)
+
         self.timeline_layout.insertWidget(1, self.scene_edit_surface)
 
         self.scenes.currentItemChanged.connect(
@@ -460,6 +481,8 @@ class StudioPage(_BaseStudioPage):
             self.scene_speed_spin,
             self.scene_edit_save_button,
             self.scene_edit_reset_button,
+            self.scene_split_at_spin,
+            self.scene_split_button,
         ):
             widget.setEnabled(enabled)
 
@@ -544,10 +567,16 @@ class StudioPage(_BaseStudioPage):
         self.scene_trim_start_spin.setValue(trim_start)
         self.scene_trim_end_spin.setValue(trim_end)
         self.scene_speed_spin.setValue(speed)
+        effective = (trim_end - trim_start) / speed
+        self.scene_split_at_spin.setMaximum(max(0.001, effective - 0.001))
+        self.scene_split_at_spin.setValue(effective / 2.0)
         self.scene_edit_label.setText(
             f"Clip edit · Scene {scene_number} · source {duration:.2f}s"
         )
         self._set_scene_edit_controls_enabled(True)
+        can_split = effective > 0.002
+        self.scene_split_at_spin.setEnabled(can_split)
+        self.scene_split_button.setEnabled(can_split)
 
     def _save_selected_scene_edit(self) -> None:
         scene_id = self._selected_scene_id()
@@ -594,6 +623,175 @@ class StudioPage(_BaseStudioPage):
         effective = (trim_end - trim_start) / speed
         self.status_message.emit(
             f"Scene clip edit saved · effective duration {effective:.2f}s"
+        )
+
+    def _split_selected_scene(self) -> None:
+        source_id = self._selected_scene_id()
+        if not self.project_id or not source_id:
+            self.status_message.emit("Select a scene before splitting its clip")
+            return
+
+        mutation_state = self._prepare_scene_mutation()
+        if mutation_state is None:
+            return
+
+        try:
+            _state, edits, durations = self._scene_edit_state_for_edit()
+        except (ValueError, UnsupportedProjectTimeline) as exc:
+            self.status_message.emit(f"Scene split invalid · {exc}")
+            self._sync_scene_edit_editor()
+            return
+
+        source_duration = durations.get(source_id)
+        if source_duration is None:
+            self.status_message.emit("Scene split invalid · selected scene missing")
+            return
+
+        existing = next(
+            (
+                item
+                for item in edits
+                if str(item.get("scene_id", "")).strip() == source_id
+            ),
+            None,
+        )
+        trim_start = 0.0
+        trim_end = float(source_duration)
+        speed = 1.0
+        if existing is not None:
+            trim_start = float(existing["trim_start"])
+            trim_end = float(existing["trim_end"])
+            speed = float(existing["speed"])
+
+        split_at = float(self.scene_split_at_spin.value())
+        try:
+            logical_clip = TimelineClip(
+                clip_id=source_id,
+                path=f"scene://{source_id}",
+                kind="video",
+                source_duration=float(source_duration),
+                trim_start=trim_start,
+                trim_end=trim_end,
+                speed=speed,
+            )
+            left_clip, right_clip = split_clip(logical_clip, split_at)
+        except ValueError as exc:
+            self.status_message.emit(f"Scene split invalid · {exc}")
+            return
+
+        scenes_before = self.store.list_scenes(self.project_id)
+        source_scene = next(
+            (scene for scene in scenes_before if str(scene["id"]) == source_id),
+            None,
+        )
+        if source_scene is None:
+            self.status_message.emit("Scene split invalid · selected scene missing")
+            return
+        source_index = next(
+            index
+            for index, scene in enumerate(scenes_before)
+            if str(scene["id"]) == source_id
+        )
+        following_id = (
+            str(scenes_before[source_index + 1]["id"])
+            if source_index + 1 < len(scenes_before)
+            else None
+        )
+
+        outgoing_transition = None
+        if following_id is not None:
+            for raw in mutation_state.get("transitions", []):
+                if (
+                    str(raw.get("from_id", "")).strip() == source_id
+                    and str(raw.get("to_id", "")).strip() == following_id
+                ):
+                    outgoing_transition = dict(raw)
+                    break
+
+        count_before = len(scenes_before)
+        self._duplicate_selected_scene()
+        duplicate_id = self._selected_scene_id()
+        scenes_after = self.store.list_scenes(self.project_id)
+        if (
+            len(scenes_after) != count_before + 1
+            or not duplicate_id
+            or duplicate_id == source_id
+        ):
+            self.status_message.emit("Scene split blocked · scene duplication did not complete")
+            return
+
+        # Split is a transport operation, not a content rewrite. Keep both
+        # halves bound to the exact same scene text/media ownership.
+        self.store.update_scene(duplicate_id, text=str(source_scene["text"]))
+
+        next_state = self.store.load_timeline(self.project_id)
+        raw_edits = next_state.get("sceneEdits", [])
+        if not isinstance(raw_edits, list):
+            self.status_message.emit("Scene split invalid · sceneEdits must be a list")
+            return
+        candidate_edits = [
+            dict(item)
+            for item in raw_edits
+            if (
+                isinstance(item, dict)
+                and str(item.get("scene_id", "")).strip()
+                not in {source_id, duplicate_id}
+            )
+        ]
+        candidate_edits.extend(
+            [
+                {
+                    "scene_id": source_id,
+                    "trim_start": float(left_clip.trim_start),
+                    "trim_end": float(left_clip.trim_end),
+                    "speed": float(left_clip.speed),
+                },
+                {
+                    "scene_id": duplicate_id,
+                    "trim_start": float(right_clip.trim_start),
+                    "trim_end": float(right_clip.trim_end),
+                    "speed": float(right_clip.speed),
+                },
+            ]
+        )
+        next_state["sceneEdits"] = candidate_edits
+
+        raw_transitions = next_state.get("transitions", [])
+        if not isinstance(raw_transitions, list):
+            self.status_message.emit("Scene split invalid · transitions must be a list")
+            return
+        transitions = [dict(item) for item in raw_transitions if isinstance(item, dict)]
+        if outgoing_transition is not None and following_id is not None:
+            ids_after = [str(scene["id"]) for scene in scenes_after]
+            try:
+                duplicate_index = ids_after.index(duplicate_id)
+            except ValueError:
+                duplicate_index = -1
+            if (
+                duplicate_index >= 0
+                and duplicate_index + 1 < len(ids_after)
+                and ids_after[duplicate_index + 1] == following_id
+            ):
+                remapped = dict(outgoing_transition)
+                remapped["from_id"] = duplicate_id
+                remapped["to_id"] = following_id
+                transitions.append(remapped)
+        next_state["transitions"] = transitions
+
+        durations_after = self._scene_edit_durations()
+        try:
+            validate_persisted_scene_edits(durations_after, next_state)
+        except UnsupportedProjectTimeline as exc:
+            self.status_message.emit(f"Scene split invalid · {exc}")
+            return
+
+        self.store.save_timeline(self.project_id, next_state)
+        self._refresh_scenes(selected_id=duplicate_id)
+        self._sync_transition_editor()
+        self._sync_scene_edit_editor()
+        self.status_message.emit(
+            f"Scene split · {split_at:.2f}s + "
+            f"{logical_clip.effective_duration - split_at:.2f}s effective"
         )
 
     def _reset_selected_scene_edit(self) -> None:
