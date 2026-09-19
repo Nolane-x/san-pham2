@@ -152,6 +152,9 @@ class ProjectStore:
         result: list[dict[str, Any]] = []
         for row in rows:
             scene = dict(row)
+            scene_id = str(scene["id"])
+            if not str(scene["text"]).strip():
+                raise ValueError(f"scene {scene_id} text must not be blank")
             scene["metadata"] = json.loads(scene.pop("metadata_json") or "{}")
             result.append(scene)
         return result
