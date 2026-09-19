@@ -520,6 +520,12 @@ class ProjectStore:
                         f"scene {scene_id} contains hidden visual object "
                         f"with noncanonical id {raw_object_id!r}"
                     )
+                if item["kind"] not in self._VISUAL_OBJECT_KINDS:
+                    allowed = ", ".join(sorted(self._VISUAL_OBJECT_KINDS))
+                    raise ValueError(
+                        f"scene {scene_id} hidden visual object {object_id} "
+                        f"kind must be one of: {allowed}"
+                    )
             z_index = int(item["z_index"])
             prior_visible = seen_z_visibility.get(z_index)
             if prior_visible is not None and not (prior_visible and item["visible"]):
