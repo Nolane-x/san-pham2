@@ -139,3 +139,30 @@ def test_visual_object_read_rejects_non_boolean_persisted_flags(tmp_path, field,
         match=rf"^visual object {object_id} {field} must be stored as 0 or 1$",
     ):
         store.list_visual_objects(scene_id)
+
+
+
+def test_visual_object_read_rejects_duplicate_persisted_z_index_even_when_hidden(tmp_path):
+    store, scene_id = _store(tmp_path)
+    first = store.add_visual_object(scene_id, "shape", name="Back")
+    second = store.add_visual_object(
+        scene_id,
+        "text",
+        name="Hidden front",
+        visible=False,
+        payload={"text": "hidden"},
+    )
+
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE visual_editor_objects SET z_index=0 WHERE id=?",
+            (second,),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^scene {scene_id} visual object z_index 0 must be unique$",
+    ):
+        store.list_visual_objects(scene_id)
+
+    assert first != second
